@@ -423,16 +423,28 @@ async def research(
     }
 
     agent_trace: list[AgentStep] = []
-    agent_start = time.monotonic()
+    node_order = ["supervisor", "researcher", "analyst", "fact_checker", "writer"]
+    node_timings: dict[str, float] = {}
+    final_state: dict = dict(initial_state)
 
-    final_state = await graph.ainvoke(initial_state)
+    # Stream updates so we can measure real per-node wall-clock time
+    node_start = time.monotonic()
+    async for event in graph.astream(initial_state, stream_mode="updates"):
+        node_end = time.monotonic()
+        for node_name, node_output in event.items():
+            node_timings[node_name] = (node_end - node_start) * 1000
+            final_state.update(node_output)
+        node_start = time.monotonic()
 
-    for agent_name in ["supervisor", "researcher", "analyst", "fact_checker", "writer"]:
-        agent_trace.append(AgentStep(
-            agent=agent_name,
+    agent_trace = [
+        AgentStep(
+            agent=name,
             action="completed",
-            duration_ms=(time.monotonic() - agent_start) * 200,
-        ))
+            duration_ms=round(node_timings.get(name, 0.0), 1),
+        )
+        for name in node_order
+        if name in node_timings
+    ]
 
     latency_ms = (time.monotonic() - start) * 1000
     fc_results = [
