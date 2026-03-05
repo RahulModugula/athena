@@ -7,8 +7,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://athena:athena@localhost:5432/athena"
     database_url_sync: str = "postgresql://athena:athena@localhost:5432/athena"
 
+    llm_provider: str = "anthropic"  # "anthropic" or "zhipuai"
+    anthropic_api_key: str = ""
     zhipuai_api_key: str = ""
-    llm_model: str = "glm-4"
+    llm_model: str = "claude-sonnet-4-20250514"
 
     embedding_model: str = "BAAI/bge-m3"
     embedding_dim: int = 1024

@@ -69,7 +69,7 @@ Athena ingests PDF, DOCX, TXT, and HTML documents, chunks and embeds them with `
 | Embeddings | BAAI/bge-m3 | SOTA open model, 1024 dims, multilingual, local |
 | Sparse retrieval | BM25 (in-Postgres) | Exact keyword matching complementing dense retrieval |
 | Reranker | cross-encoder/ms-marco | Fine-tuned relevance model, significant precision lift |
-| LLM | ZhipuAI GLM-4 | Strong EN/ZH instruction following, accessible SDK |
+| LLM | Anthropic Claude / ZhipuAI GLM-4 | Configurable provider — Claude for deep reasoning, GLM-4 for EN/ZH |
 | Evaluation | RAGAS | Industry-standard RAG evaluation framework |
 | Frontend | Streamlit | Fast iteration, no frontend build tooling |
 | Containerisation | Docker Compose | Reproducible local and CI environment |
@@ -84,7 +84,7 @@ Athena ingests PDF, DOCX, TXT, and HTML documents, chunks and embeds them with `
 
 - Docker and Docker Compose
 - Python 3.12 (for local development)
-- A ZhipuAI API key ([platform.zhipuai.cn](https://open.zhipuai.cn/))
+- An Anthropic API key or ZhipuAI API key (set `ATHENA_LLM_PROVIDER` to `anthropic` or `zhipuai`)
 
 ### Clone and configure
 
@@ -92,7 +92,7 @@ Athena ingests PDF, DOCX, TXT, and HTML documents, chunks and embeds them with `
 git clone https://github.com/yourusername/athena.git
 cd athena
 cp backend/.env.example backend/.env
-# Edit backend/.env and set ATHENA_ZHIPUAI_API_KEY=<your key>
+# Edit backend/.env and set ATHENA_ANTHROPIC_API_KEY=<your key>
 ```
 
 ### Start the stack

@@ -1,9 +1,8 @@
 from collections.abc import AsyncIterator
 
 import structlog
-from langchain_community.chat_models import ChatZhipuAI
+from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
 
 from app.config import settings
 from app.generation.prompts import RAG_PROMPT, format_context
@@ -11,13 +10,25 @@ from app.generation.prompts import RAG_PROMPT, format_context
 logger = structlog.get_logger()
 
 
-def get_llm(streaming: bool = False) -> ChatZhipuAI:
-    return ChatZhipuAI(
-        model=settings.llm_model,
-        api_key=settings.zhipuai_api_key,
-        temperature=0.1,
-        streaming=streaming,
-    )
+def get_llm(streaming: bool = False) -> BaseChatModel:
+    if settings.llm_provider == "zhipuai":
+        from langchain_community.chat_models import ChatZhipuAI
+
+        return ChatZhipuAI(
+            model=settings.llm_model,
+            api_key=settings.zhipuai_api_key,
+            temperature=0.1,
+            streaming=streaming,
+        )
+    else:
+        from langchain_anthropic import ChatAnthropic
+
+        return ChatAnthropic(
+            model=settings.llm_model,
+            api_key=settings.anthropic_api_key,
+            temperature=0.1,
+            streaming=streaming,
+        )
 
 
 async def generate_answer(question: str, chunks: list[dict]) -> str:

@@ -50,5 +50,6 @@ jobs:
       - name: Test
         env:
           ATHENA_DATABASE_URL: postgresql+asyncpg://athena:athena@localhost:5432/athena
-          ATHENA_ZHIPUAI_API_KEY: placeholder
+          ATHENA_LLM_PROVIDER: anthropic
+          ATHENA_ANTHROPIC_API_KEY: placeholder
         run: pytest tests/ -v --tb=short
