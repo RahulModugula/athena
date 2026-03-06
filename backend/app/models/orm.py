@@ -84,6 +84,7 @@ class EvalRun(Base):
     dataset_name: Mapped[str] = mapped_column(String, nullable=False)
     chunking_strategy: Mapped[str] = mapped_column(String, nullable=False)
     retrieval_strategy: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     metrics: Mapped[dict] = mapped_column(JSONB, nullable=False)
     sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

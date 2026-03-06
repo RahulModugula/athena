@@ -37,7 +37,13 @@ logger = structlog.get_logger()
 
 router = APIRouter()
 
-ALLOWED_MIME_TYPES = {"application/pdf", "text/plain", "text/markdown"}
+ALLOWED_MIME_TYPES = {
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "text/html",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -305,16 +311,14 @@ async def run_eval(
     req: EvalRequest,
     db: AsyncSession = Depends(get_db),
 ) -> EvalRunResponse:
-    import subprocess
-    import sys
+    import asyncio
 
     result = await db.execute(select(func.count()).select_from(Document))
     doc_count = result.scalar_one()
     if doc_count == 0:
         raise HTTPException(400, "no documents ingested — upload documents before running evaluation")
 
-    # placeholder metrics (real eval runs via CLI: python -m eval.runner)
-    metrics = EvalMetrics(
+    empty_metrics = EvalMetrics(
         faithfulness=0.0,
         answer_relevance=0.0,
         context_precision=0.0,
@@ -324,18 +328,51 @@ async def run_eval(
         dataset_name=req.dataset,
         chunking_strategy=req.chunking_strategy.value,
         retrieval_strategy=req.retrieval_strategy.value,
-        metrics=metrics.model_dump(),
+        status="running",
+        metrics=empty_metrics.model_dump(),
         sample_count=0,
     )
     db.add(eval_run)
     await db.flush()
+    run_id = eval_run.id
+    await db.commit()
+
+    async def _run_and_update(run_id: uuid.UUID) -> None:
+        from eval.runner import run_evaluation
+        from app.database import async_session as AsyncSessionLocal
+
+        try:
+            result_data = await run_evaluation(
+                dataset_name=req.dataset,
+                chunking_strategy=req.chunking_strategy.value,
+                retrieval_strategy=req.retrieval_strategy.value,
+            )
+        except Exception as exc:
+            logger.warning("eval run failed", error=str(exc))
+            result_data = {}
+
+        async with AsyncSessionLocal() as session:
+            run_result = await session.execute(select(EvalRun).where(EvalRun.id == run_id))
+            run = run_result.scalar_one_or_none()
+            if run is None:
+                return
+            if result_data.get("metrics"):
+                run.metrics = result_data["metrics"]
+                run.sample_count = result_data.get("sample_count", 0)
+                run.status = "completed"
+            else:
+                run.status = "failed"
+            await session.commit()
+
+    asyncio.create_task(_run_and_update(run_id))
 
     return EvalRunResponse(
         id=eval_run.id,
         dataset_name=eval_run.dataset_name,
         chunking_strategy=eval_run.chunking_strategy,
         retrieval_strategy=eval_run.retrieval_strategy,
-        metrics=metrics,
+        status="running",
+        metrics=empty_metrics,
         sample_count=0,
         created_at=eval_run.created_at,
     )
@@ -356,6 +393,7 @@ async def list_eval_results(
             dataset_name=run.dataset_name,
             chunking_strategy=run.chunking_strategy,
             retrieval_strategy=run.retrieval_strategy,
+            status=run.status,
             metrics=EvalMetrics(**run.metrics),
             sample_count=run.sample_count,
             created_at=run.created_at,

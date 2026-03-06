@@ -87,6 +87,7 @@ class EvalRunResponse(BaseModel):
     dataset_name: str
     chunking_strategy: str
     retrieval_strategy: str
+    status: str = "completed"
     metrics: EvalMetrics
     sample_count: int
     created_at: datetime
