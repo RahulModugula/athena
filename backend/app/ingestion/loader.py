@@ -35,10 +35,33 @@ def load_markdown(file_bytes: bytes, filename: str) -> list[Page]:
     return [Page(content=text, page_number=1, metadata={"source": filename})]
 
 
+def load_html(file_bytes: bytes, filename: str) -> list[Page]:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(file_bytes, "lxml")
+    for tag in soup(["script", "style", "nav", "footer", "header"]):
+        tag.decompose()
+    text = soup.get_text(separator="\n", strip=True)
+    logger.info("loaded html", filename=filename)
+    return [Page(content=text, page_number=1, metadata={"source": filename})]
+
+
+def load_docx(file_bytes: bytes, filename: str) -> list[Page]:
+    from docx import Document
+
+    doc = Document(io.BytesIO(file_bytes))
+    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+    text = "\n\n".join(paragraphs)
+    logger.info("loaded docx", filename=filename, paragraphs=len(paragraphs))
+    return [Page(content=text, page_number=1, metadata={"source": filename})]
+
+
 LOADER_MAP = {
     "application/pdf": load_pdf,
     "text/plain": load_text,
     "text/markdown": load_markdown,
+    "text/html": load_html,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": load_docx,
 }
 
 
