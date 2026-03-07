@@ -34,10 +34,35 @@ async def athena_research_question(question: str, max_iterations: int = 3) -> di
 @mcp.tool()
 async def athena_search_documents(query: str, top_k: int = 5) -> list[dict]:
     """Search indexed documents using hybrid vector + BM25 search."""
-    import app.mcp._store_ref as _store_ref  # noqa: F401
+    import app.mcp._store_ref as _store_ref
 
-    # Return empty list if no DB available in MCP context
-    return []
+    if (
+        _store_ref.db_session_factory is None
+        or _store_ref.embedder is None
+        or _store_ref.reranker is None
+    ):
+        return []
+
+    from app.services.retrieval_service import RetrievalService
+
+    async with _store_ref.db_session_factory() as session:
+        svc = RetrievalService(
+            db=session,
+            embedder=_store_ref.embedder,
+            reranker=_store_ref.reranker,
+        )
+        chunks = await svc.retrieve(query, top_k=top_k)
+
+    return [
+        {
+            "chunk_id": str(c["chunk_id"]),
+            "content": c["content"],
+            "document_name": c["document_name"],
+            "chunk_index": c["chunk_index"],
+            "score": float(c["score"]),
+        }
+        for c in chunks
+    ]
 
 
 @mcp.tool()

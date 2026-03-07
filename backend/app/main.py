@@ -37,8 +37,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.graph_store = None
 
     import app.mcp._store_ref as _store_ref
+    from app.database import async_session as _session_factory
 
     _store_ref.graph_store = app.state.graph_store
+    _store_ref.embedder = app.state.embedder
+    _store_ref.reranker = app.state.reranker
+    _store_ref.db_session_factory = _session_factory
 
     if settings.cache_enabled and settings.redis_url:
         from app.services.cache import CacheService
@@ -71,6 +75,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from app.api.middleware import APIKeyMiddleware, RateLimitMiddleware  # noqa: E402
+
+app.add_middleware(APIKeyMiddleware, api_keys=settings.api_keys)
+app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.rate_limit_per_minute)
 
 
 @app.exception_handler(Exception)
