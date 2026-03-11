@@ -43,5 +43,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     cors_origins: list[str] = ["http://localhost:8501", "http://localhost:5173"]
 
+    # API key authentication — comma-separated list; empty string disables auth
+    api_keys: list[str] = []
+    # Rate limiting — requests per minute per IP (0 = disabled)
+    rate_limit_per_minute: int = 60
+
 
 settings = Settings()
