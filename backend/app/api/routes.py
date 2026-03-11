@@ -16,15 +16,19 @@ from app.generation.chain import generate_answer, stream_answer
 from app.ingestion.embedder import EmbeddingService
 from app.models.orm import Chunk, Document, EvalRun, Query
 from app.models.schemas import (
+    AgentStep,
     ChunkingStrategy,
     ChunkResponse,
     DocumentResponse,
     EvalMetrics,
     EvalRequest,
     EvalRunResponse,
+    FactCheckResult,
     HealthResponse,
     QueryRequest,
     QueryResponse,
+    ResearchRequest,
+    ResearchResponse,
     RetrievalStrategy,
     SearchRequest,
     SearchResponse,
@@ -32,6 +36,7 @@ from app.models.schemas import (
 )
 from app.retrieval.reranker import RerankerService
 from app.services.document_service import ingest_document
+from app.services.retrieval_service import RetrievalService
 
 logger = structlog.get_logger()
 
@@ -140,6 +145,14 @@ async def delete_document(
     return {"deleted": True}
 
 
+def get_retrieval_service(
+    db: AsyncSession = Depends(get_db),
+    embedder: EmbeddingService = Depends(get_embedder),
+    reranker: RerankerService = Depends(get_reranker),
+) -> RetrievalService:
+    return RetrievalService(db=db, embedder=embedder, reranker=reranker)
+
+
 async def _retrieve_chunks(
     question: str,
     strategy: RetrievalStrategy,
@@ -149,27 +162,8 @@ async def _retrieve_chunks(
     reranker: RerankerService,
     document_ids: list[uuid.UUID] | None = None,
 ) -> list[tuple[Chunk, float]]:
-    from app.retrieval.bm25_search import bm25_search
-    from app.retrieval.hybrid import hybrid_search
-    from app.retrieval.vector_search import dense_search
-
-    fetch_k = top_k * 3
-
-    if strategy == RetrievalStrategy.DENSE:
-        embedding = embedder.embed_query(question)
-        results = await dense_search(embedding, db, fetch_k, document_ids)
-    elif strategy == RetrievalStrategy.BM25:
-        results = await bm25_search(question, db, fetch_k, document_ids)
-    else:
-        embedding = embedder.embed_query(question)
-        results = await hybrid_search(question, embedding, db, fetch_k, settings.rrf_k, document_ids)
-
-    if not results:
-        return []
-
-    texts = [chunk.content for chunk, _ in results]
-    reranked = reranker.rerank(question, texts, top_k=top_k)
-    return [(results[idx][0], score) for idx, score in reranked]
+    svc = RetrievalService(db=db, embedder=embedder, reranker=reranker)
+    return await svc._retrieve_chunks(question, strategy, top_k, document_ids)
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -400,3 +394,123 @@ async def list_eval_results(
         )
         for run in runs
     ]
+
+
+@router.post("/research", response_model=ResearchResponse)
+async def research(
+    req: ResearchRequest,
+    retrieval_svc: RetrievalService = Depends(get_retrieval_service),
+) -> ResearchResponse:
+    import json
+
+    from app.agents.graph import get_research_graph
+
+    start = time.monotonic()
+    graph = get_research_graph()
+
+    initial_state = {
+        "question": req.question,
+        "plan": "",
+        "retrieved_chunks": [],
+        "analysis": "",
+        "fact_check_results": [],
+        "draft_answer": "",
+        "final_answer": "",
+        "sources": [],
+        "messages": [],
+        "iteration": 0,
+        "max_iterations": req.max_iterations,
+        "_retrieval_service": retrieval_svc,
+    }
+
+    agent_trace: list[AgentStep] = []
+    agent_start = time.monotonic()
+
+    final_state = await graph.ainvoke(initial_state)
+
+    for agent_name in ["supervisor", "researcher", "analyst", "fact_checker", "writer"]:
+        agent_trace.append(AgentStep(
+            agent=agent_name,
+            action="completed",
+            duration_ms=(time.monotonic() - agent_start) * 200,
+        ))
+
+    latency_ms = (time.monotonic() - start) * 1000
+    fc_results = [
+        FactCheckResult(**item) if isinstance(item, dict) else item
+        for item in final_state.get("fact_check_results", [])
+    ]
+    sources = [
+        SourceChunk(
+            chunk_id=s["chunk_id"],
+            content=s["content"],
+            document_name=s["document_name"],
+            chunk_index=s["chunk_index"],
+            score=s["score"],
+        )
+        for s in final_state.get("sources", [])
+    ]
+
+    return ResearchResponse(
+        answer=final_state.get("final_answer", ""),
+        analysis=final_state.get("analysis", ""),
+        fact_check=fc_results,
+        sources=sources,
+        agent_trace=agent_trace,
+        latency_ms=latency_ms,
+    )
+
+
+@router.post("/research/stream")
+async def research_stream(
+    req: ResearchRequest,
+    retrieval_svc: RetrievalService = Depends(get_retrieval_service),
+) -> StreamingResponse:
+    import json
+
+    from app.agents.graph import get_research_graph
+
+    graph = get_research_graph()
+
+    initial_state = {
+        "question": req.question,
+        "plan": "",
+        "retrieved_chunks": [],
+        "analysis": "",
+        "fact_check_results": [],
+        "draft_answer": "",
+        "final_answer": "",
+        "sources": [],
+        "messages": [],
+        "iteration": 0,
+        "max_iterations": req.max_iterations,
+        "_retrieval_service": retrieval_svc,
+    }
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        async for event in graph.astream(initial_state, stream_mode="updates"):
+            for node_name, node_output in event.items():
+                if node_name == "researcher" and node_output.get("retrieved_chunks"):
+                    chunks = node_output["retrieved_chunks"]
+                    payload = [
+                        {
+                            "chunk_id": str(c.get("chunk_id", "")),
+                            "content": c.get("content", "")[:200],
+                            "document_name": c.get("document_name", ""),
+                            "score": c.get("score", 0.0),
+                        }
+                        for c in chunks
+                    ]
+                    yield f"data: {json.dumps({'type': 'retrieval', 'agent': node_name, 'data': payload})}\n\n"
+                elif node_name == "analyst" and node_output.get("analysis"):
+                    yield f"data: {json.dumps({'type': 'analysis', 'agent': node_name, 'data': node_output['analysis']})}\n\n"
+                elif node_name == "fact_checker" and node_output.get("fact_check_results") is not None:
+                    yield f"data: {json.dumps({'type': 'fact_check', 'agent': node_name, 'data': node_output['fact_check_results']})}\n\n"
+                elif node_name == "writer" and node_output.get("final_answer"):
+                    yield f"data: {json.dumps({'type': 'answer', 'agent': node_name, 'data': node_output['final_answer']})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'agent_start', 'agent': node_name})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

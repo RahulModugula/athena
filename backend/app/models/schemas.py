@@ -99,3 +99,31 @@ class HealthResponse(BaseModel):
     embedding_model: str
     llm_model: str
     document_count: int
+
+
+class AgentStep(BaseModel):
+    agent: str
+    action: str
+    duration_ms: float
+
+
+class FactCheckResult(BaseModel):
+    claim: str
+    supported: bool
+    confidence: float
+    evidence: list[str] = Field(default_factory=list)
+
+
+class ResearchRequest(BaseModel):
+    question: str
+    max_iterations: int = Field(default=3, ge=1, le=5)
+    strategy: RetrievalStrategy = RetrievalStrategy.HYBRID
+
+
+class ResearchResponse(BaseModel):
+    answer: str
+    analysis: str
+    fact_check: list[FactCheckResult] = Field(default_factory=list)
+    sources: list[SourceChunk] = Field(default_factory=list)
+    agent_trace: list[AgentStep] = Field(default_factory=list)
+    latency_ms: float
