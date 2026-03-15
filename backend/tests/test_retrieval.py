@@ -1,5 +1,6 @@
-from app.retrieval.hybrid import reciprocal_rank_fusion
 import uuid
+
+from app.retrieval.hybrid import reciprocal_rank_fusion
 
 
 class TestRRF:

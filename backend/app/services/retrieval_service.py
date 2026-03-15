@@ -27,7 +27,7 @@ class RetrievalService:
         strategy: RetrievalStrategy = RetrievalStrategy.HYBRID,
         top_k: int | None = None,
         document_ids: list[uuid.UUID] | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, object]]:
         top_k = top_k or settings.rerank_top_k
         chunks_with_scores = await self._retrieve_chunks(
             question, strategy, top_k, document_ids

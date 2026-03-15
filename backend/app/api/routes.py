@@ -89,7 +89,7 @@ async def upload_document(
             embedder=embedder,
         )
     except ValueError as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from e
 
     chunk_count_result = await db.execute(
         select(func.count()).select_from(Chunk).where(Chunk.document_id == doc.id)
@@ -332,8 +332,8 @@ async def run_eval(
     await db.commit()
 
     async def _run_and_update(run_id: uuid.UUID) -> None:
+        from app.database import async_session as session_factory
         from eval.runner import run_evaluation
-        from app.database import async_session as AsyncSessionLocal
 
         try:
             result_data = await run_evaluation(
@@ -345,7 +345,7 @@ async def run_eval(
             logger.warning("eval run failed", error=str(exc))
             result_data = {}
 
-        async with AsyncSessionLocal() as session:
+        async with session_factory() as session:
             run_result = await session.execute(select(EvalRun).where(EvalRun.id == run_id))
             run = run_result.scalar_one_or_none()
             if run is None:
@@ -401,7 +401,6 @@ async def research(
     req: ResearchRequest,
     retrieval_svc: RetrievalService = Depends(get_retrieval_service),
 ) -> ResearchResponse:
-    import json
 
     from app.agents.graph import get_research_graph
 

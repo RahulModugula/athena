@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     zhipuai_api_key: str = ""
     llm_model: str = "claude-sonnet-4-20250514"
+    # For ZhipuAI, use: glm-z1-air, glm-4-flash, glm-4-plus
+    zhipuai_model: str = "glm-z1-air"
 
     embedding_model: str = "BAAI/bge-m3"
     embedding_dim: int = 1024

@@ -30,7 +30,7 @@ async def supervisor_node(state: ResearchState) -> dict:
         SystemMessage(content=SUPERVISOR_SYSTEM),
         HumanMessage(content=f"Question: {state['question']}"),
     ]
-    result: ResearchPlan = await structured.ainvoke(messages)  # type: ignore[assignment]
+    result: ResearchPlan = await structured.ainvoke(messages)
 
     return {
         "plan": result.plan,

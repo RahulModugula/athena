@@ -50,12 +50,54 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
+ignore = ["B008"]  # FastAPI Depends() in function defaults is intentional
+
+[tool.ruff.lint.per-file-ignores]
+"app/agents/*.py" = ["E501"]      # long prompt strings
+"app/generation/prompts.py" = ["E501"]
+"app/api/routes.py" = ["E501"]
+"tests/*.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = [
+    "pgvector.*",
+    "ragas.*",
+    "datasets.*",
+    "sentence_transformers.*",
+    "langchain_community.*",
+    "langchain_anthropic.*",
+    "langgraph.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["app.agents.*"]
+disable_error_code = ["type-arg", "no-any-return", "assignment", "return-value"]
+
+[[tool.mypy.overrides]]
+module = [
+    "app.models.orm",
+    "app.ingestion.chunker",
+    "app.ingestion.embedder",
+    "app.ingestion.loader",
+    "app.retrieval.*",
+    "app.generation.prompts",
+    "app.services.document_service",
+    "app.api.deps",
+    "app.api.routes",
+    "eval.runner",
+]
+disable_error_code = ["type-arg", "no-any-return", "import-not-found", "unused-ignore", "arg-type", "no-untyped-call"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "eval*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

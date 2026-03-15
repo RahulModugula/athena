@@ -27,12 +27,12 @@ async def researcher_node(state: ResearchState) -> dict:
         SystemMessage(content=DECOMPOSE_SYSTEM),
         HumanMessage(content=f"Question: {question}\nPlan: {plan}"),
     ]
-    decomposed: SubQueries = await structured.ainvoke(messages)  # type: ignore[assignment]
+    decomposed: SubQueries = await structured.ainvoke(messages)
 
     # Lazy import to avoid circular deps at module load time
     from app.services.retrieval_service import RetrievalService
 
-    service: RetrievalService | None = state.get("_retrieval_service")  # type: ignore[assignment]
+    service: RetrievalService | None = state.get("_retrieval_service")
 
     all_chunks: list[dict] = []
     seen_ids: set[str] = set()

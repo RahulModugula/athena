@@ -1,6 +1,6 @@
 import pytest
 
-from app.ingestion.loader import load_document, load_html, load_docx, load_text, load_pdf
+from app.ingestion.loader import load_document, load_html, load_text
 
 
 def test_load_text_basic() -> None:
@@ -47,6 +47,7 @@ def test_load_html_via_dispatch() -> None:
 
 def test_load_docx_via_dispatch() -> None:
     import io
+
     from docx import Document
 
     doc = Document()

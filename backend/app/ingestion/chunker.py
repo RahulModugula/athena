@@ -83,7 +83,9 @@ class SemanticChunker(BaseChunker):
         metadata = metadata or {}
         sentences = self._split_sentences(text)
         if len(sentences) < 2:
-            return [Chunk(content=text, index=0, token_count=_estimate_tokens(text), metadata=metadata)]
+            return [Chunk(
+                content=text, index=0, token_count=_estimate_tokens(text), metadata=metadata
+            )]
 
         from app.ingestion.embedder import EmbeddingService
         embedder: EmbeddingService = self.embedding_service  # type: ignore[assignment]
@@ -129,7 +131,7 @@ class SemanticChunker(BaseChunker):
 
     @staticmethod
     def _cosine_similarity(a: list[float], b: list[float]) -> float:
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=True))
         norm_a = sum(x * x for x in a) ** 0.5
         norm_b = sum(x * x for x in b) ** 0.5
         if norm_a == 0 or norm_b == 0:

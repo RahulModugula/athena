@@ -55,7 +55,7 @@ async def ingest_document(
         texts = [c.content for c in batch]
         embeddings = embedder.embed_texts(texts)
 
-        for chunk, embedding in zip(batch, embeddings):
+        for chunk, embedding in zip(batch, embeddings, strict=True):
             db_chunk = Chunk(
                 document_id=doc.id,
                 content=chunk.content,

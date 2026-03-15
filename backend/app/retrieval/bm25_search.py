@@ -1,5 +1,5 @@
 import structlog
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.orm import Chunk

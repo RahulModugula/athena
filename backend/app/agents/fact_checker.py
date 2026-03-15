@@ -48,7 +48,7 @@ async def fact_checker_node(state: ResearchState) -> dict:
             content=f"Analysis to verify:\n{analysis}\n\nSource passages:\n{sources_text}"
         ),
     ]
-    result: FactCheckResults = await structured.ainvoke(messages)  # type: ignore[assignment]
+    result: FactCheckResults = await structured.ainvoke(messages)
     items = [item.model_dump() for item in result.results]
     logger.info("fact_checker done", claims=len(items))
     return {"fact_check_results": items}
