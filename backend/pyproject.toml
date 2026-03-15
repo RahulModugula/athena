@@ -18,6 +18,7 @@ dependencies = [
     "langchain-community>=0.3.0",
     "sentence-transformers>=3.0.0",
     "langchain-anthropic>=0.3.0",
+    "langchain-openai>=0.3.0",
     "langgraph>=0.3.0",
     "zhipuai>=2.1.0",
     "pypdf>=5.0.0",
@@ -57,6 +58,7 @@ ignore = ["B008"]  # FastAPI Depends() in function defaults is intentional
 "app/generation/prompts.py" = ["E501"]
 "app/api/routes.py" = ["E501"]
 "tests/*.py" = ["E501"]
+"eval/*.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
