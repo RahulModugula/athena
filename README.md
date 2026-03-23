@@ -84,7 +84,7 @@ Athena ingests PDF, DOCX, TXT, and HTML documents, chunks and embeds them with `
 
 - Docker and Docker Compose
 - Python 3.12 (for local development)
-- An Anthropic API key or ZhipuAI API key (set `ATHENA_LLM_PROVIDER` to `anthropic` or `zhipuai`)
+- An Anthropic, ZhipuAI, or OpenRouter API key
 
 ### Clone and configure
 
@@ -92,16 +92,23 @@ Athena ingests PDF, DOCX, TXT, and HTML documents, chunks and embeds them with `
 git clone https://github.com/yourusername/athena.git
 cd athena
 cp backend/.env.example backend/.env
-# Edit backend/.env and set ATHENA_ANTHROPIC_API_KEY=<your key>
+# Edit backend/.env — set ATHENA_ANTHROPIC_API_KEY or another provider key
 ```
 
 ### Start the stack
 
 ```bash
-docker compose up --build
+make up          # docker compose up --build
+make demo        # seed demo documents and open the UI
 ```
 
-This starts PostgreSQL with pgvector, runs database migrations, and starts the FastAPI server.
+Or manually:
+
+```bash
+docker compose up --build
+# wait for backend to start, then:
+python -m scripts.seed_demo --host http://localhost:8000
+```
 
 ### Access
 
@@ -109,44 +116,65 @@ This starts PostgreSQL with pgvector, runs database migrations, and starts the F
 |---|---|
 | FastAPI (docs) | http://localhost:8000/docs |
 | Streamlit UI | http://localhost:8501 |
+| Prometheus metrics | http://localhost:8000/metrics |
 | PostgreSQL | localhost:5432 |
 
 ---
 
-## Usage
+## Quick Demo
 
-### Upload a document via CLI
+After `make demo`, three documents are pre-loaded. Try these queries:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/documents \
-  -F "file=@/path/to/document.pdf" \
+# Upload a document
+curl -X POST http://localhost:8000/api/documents/upload \
+  -F "file=@paper.pdf" \
   -F "chunking_strategy=recursive"
-```
 
-Supported strategies: `fixed`, `recursive`, `semantic`.
-
-The endpoint returns a document ID immediately; ingestion (chunking + embedding) runs as a background task.
-
-### Query via API
-
-```bash
-curl -X POST http://localhost:8000/api/v1/query \
+# Query with hybrid retrieval
+curl -X POST http://localhost:8000/api/query \
   -H "Content-Type: application/json" \
-  -d '{
-    "question": "What are the main obligations of the licensee?",
-    "top_k": 5,
-    "rerank": true
-  }'
-```
+  -d '{"question": "What is Reciprocal Rank Fusion?", "strategy": "hybrid", "top_k": 5}'
 
-Response includes the generated answer, source chunks, and relevance scores.
+# Multi-agent research pipeline
+curl -X POST http://localhost:8000/api/research \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Compare chunking strategies for RAG systems"}'
+
+# Streaming research (Server-Sent Events)
+curl -N -X POST http://localhost:8000/api/research/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What are HNSW index trade-offs?"}'
+```
 
 ### Streamlit UI
 
 Open http://localhost:8501 in your browser.
 
 - **Upload** tab: drag-and-drop or file picker; select chunking strategy.
-- **Query** tab: enter a question; view answer with expandable source citations.
+- **Query** tab: enter a question; toggle Deep Research for the multi-agent pipeline; view streaming answers with expandable source citations.
+- **Evaluate** tab: run RAGAS benchmarks and compare strategies.
+
+---
+
+## Security
+
+By default, the API is open (suitable for local development). To enable API key authentication, set `ATHENA_API_KEYS` to a comma-separated list of keys:
+
+```bash
+# backend/.env
+ATHENA_API_KEYS=key-abc123,key-def456
+```
+
+All non-exempt endpoints then require the `X-API-Key` header:
+
+```bash
+curl -H "X-API-Key: key-abc123" http://localhost:8000/api/query ...
+```
+
+The `/api/health`, `/docs`, and `/metrics` endpoints are always exempt.
+
+Rate limiting is configurable via `ATHENA_RATE_LIMIT_PER_MINUTE` (default: 60 req/min; 0 = disabled).
 
 ---
 
@@ -217,16 +245,19 @@ The benchmark dataset format (`eval/data/benchmark.jsonl`) is one JSON object pe
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/documents` | Upload and ingest a document |
-| `GET` | `/api/v1/documents` | List all ingested documents |
-| `GET` | `/api/v1/documents/{id}` | Get document metadata and status |
-| `DELETE` | `/api/v1/documents/{id}` | Delete a document and its chunks |
-| `POST` | `/api/v1/query` | Submit a question and get an answer |
-| `GET` | `/api/v1/health` | Health check |
-| `POST` | `/api/v1/eval/run` | Trigger a benchmark evaluation run |
-| `GET` | `/api/v1/eval/results` | List evaluation results |
+| `GET` | `/api/health` | Health check with document and model counts |
+| `POST` | `/api/documents/upload` | Upload and ingest a document (multipart) |
+| `GET` | `/api/documents` | List all ingested documents |
+| `DELETE` | `/api/documents/{id}` | Delete a document and its chunks |
+| `POST` | `/api/query` | RAG query — returns answer + cited sources |
+| `POST` | `/api/query/stream` | Streaming RAG query (Server-Sent Events) |
+| `POST` | `/api/search` | Pure retrieval — returns ranked chunks |
+| `POST` | `/api/research` | Multi-agent research pipeline |
+| `POST` | `/api/research/stream` | Streaming research with per-agent events |
+| `POST` | `/api/eval/run` | Trigger async RAGAS evaluation |
+| `GET` | `/api/eval/results` | List evaluation runs and metrics |
 
-Full interactive documentation is available at http://localhost:8000/docs when the server is running.
+Full interactive documentation: http://localhost:8000/docs
 
 ---
 
