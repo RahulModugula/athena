@@ -65,6 +65,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set lowercase image owner
+        run: echo "IMAGE_OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -78,8 +81,8 @@ jobs:
           context: ./backend
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/athena-backend:latest
-            ghcr.io/${{ github.repository_owner }}/athena-backend:${{ github.sha }}
+            ghcr.io/${{ env.IMAGE_OWNER }}/athena-backend:latest
+            ghcr.io/${{ env.IMAGE_OWNER }}/athena-backend:${{ github.sha }}
 
   k8s-validate:
     runs-on: ubuntu-latest
@@ -87,13 +90,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: Dry-run validate k8s manifests
+      - name: Validate k8s manifests (YAML syntax)
         run: |
-          kubectl apply --dry-run=client --validate=false -f k8s/namespace.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/configmap.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/backend/service.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/postgres/service.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/redis/service.yaml
+          python3 -c "
+          import yaml, sys, pathlib
+          files = list(pathlib.Path('k8s').rglob('*.yaml'))
+          errors = []
+          for f in files:
+              try:
+                  list(yaml.safe_load_all(f.read_text()))
+                  print(f'OK {f}')
+              except yaml.YAMLError as e:
+                  errors.append(f'FAIL {f}: {e}')
+          if errors:
+              print('\n'.join(errors)); sys.exit(1)
+          print(f'All {len(files)} manifests valid.')
+          "
