@@ -9,7 +9,8 @@ mcp = FastMCP("athena")
 async def athena_research_question(question: str, max_iterations: int = 3) -> dict:
     """Run the full multi-agent research pipeline on a question."""
     # Import here to avoid circular imports
-    from app.agents.graph import research_graph
+    from app.agents.graph import get_research_graph
+    research_graph = get_research_graph()
     from app.agents.state import ResearchState
 
     state: ResearchState = {

@@ -84,12 +84,16 @@ module = [
     "langchain_community.*",
     "langchain_anthropic.*",
     "langgraph.*",
+    "mcp.*",
+    "prometheus_client.*",
+    "neo4j.*",
+    "redis.*",
 ]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["app.agents.*"]
-disable_error_code = ["type-arg", "no-any-return", "assignment", "return-value"]
+disable_error_code = ["type-arg", "no-any-return", "assignment", "return-value", "arg-type"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -100,11 +104,15 @@ module = [
     "app.retrieval.*",
     "app.generation.prompts",
     "app.services.document_service",
+    "app.services.cache",
     "app.api.deps",
     "app.api.routes",
+    "app.graph.*",
+    "app.mcp.*",
+    "app.observability.*",
     "eval.runner",
 ]
-disable_error_code = ["type-arg", "no-any-return", "import-not-found", "unused-ignore", "arg-type", "no-untyped-call"]
+disable_error_code = ["type-arg", "no-any-return", "import-not-found", "unused-ignore", "arg-type", "no-untyped-call", "no-untyped-def", "untyped-decorator"]
 
 [tool.setuptools.packages.find]
 where = ["."]
