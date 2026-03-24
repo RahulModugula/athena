@@ -1,5 +1,7 @@
+import asyncio
 import hashlib
 import uuid
+from typing import Any
 
 import structlog
 from sqlalchemy import select
@@ -15,6 +17,22 @@ logger = structlog.get_logger()
 BATCH_SIZE = 32
 
 
+async def _extract_and_store(chunks: list[Any], graph_store: Any, llm: Any) -> None:
+    """Fire-and-forget task to extract entities from chunks and store in graph."""
+    from app.graph.extractor import extract_entities
+
+    for chunk in chunks:
+        try:
+            text = chunk.content if hasattr(chunk, "content") else str(chunk)
+            entities, relationships = await extract_entities(text, llm)
+            if entities:
+                await graph_store.upsert_entities(entities)
+            if relationships:
+                await graph_store.upsert_relationships(relationships)
+        except Exception as exc:
+            logger.warning("graph extraction failed for chunk", error=str(exc))
+
+
 async def ingest_document(
     file_bytes: bytes,
     filename: str,
@@ -22,12 +40,12 @@ async def ingest_document(
     chunking_strategy: str,
     db: AsyncSession,
     embedder: EmbeddingService,
+    graph_store: Any = None,
+    llm: Any = None,
 ) -> Document:
     content_hash = hashlib.sha256(file_bytes).hexdigest()
 
-    existing = await db.execute(
-        select(Document).where(Document.content_hash == content_hash)
-    )
+    existing = await db.execute(select(Document).where(Document.content_hash == content_hash))
     if existing.scalar_one_or_none():
         raise ValueError(f"document already ingested: {filename}")
 
@@ -51,7 +69,7 @@ async def ingest_document(
     db.add(doc)
 
     for batch_start in range(0, len(raw_chunks), BATCH_SIZE):
-        batch = raw_chunks[batch_start:batch_start + BATCH_SIZE]
+        batch = raw_chunks[batch_start : batch_start + BATCH_SIZE]
         texts = [c.content for c in batch]
         embeddings = embedder.embed_texts(texts)
 
@@ -74,4 +92,8 @@ async def ingest_document(
         chunks=len(raw_chunks),
         strategy=chunking_strategy,
     )
+
+    if graph_store is not None and llm is not None:
+        asyncio.create_task(_extract_and_store(raw_chunks[:3], graph_store, llm))
+
     return doc

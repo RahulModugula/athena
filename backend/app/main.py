@@ -24,9 +24,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.embedder = EmbeddingService(settings.embedding_model)
     app.state.reranker = RerankerService(settings.reranker_model)
 
+    if settings.graph_rag_enabled and settings.neo4j_uri:
+        from app.graph.store import GraphStore
+
+        graph_store = GraphStore(
+            uri=settings.neo4j_uri,
+            auth=(settings.neo4j_user, settings.neo4j_password),
+        )
+        await graph_store.connect()
+        app.state.graph_store = graph_store
+    else:
+        app.state.graph_store = None
+
     await log.ainfo("models loaded")
     yield
     await log.ainfo("shutting down athena")
+    if app.state.graph_store is not None:
+        await app.state.graph_store.close()
 
 
 app = FastAPI(

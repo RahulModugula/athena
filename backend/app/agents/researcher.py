@@ -49,5 +49,12 @@ async def researcher_node(state: ResearchState) -> dict:
                 seen_ids.add(cid)
                 all_chunks.append(chunk)
 
+    graph_ctx = ""
+    graph_store = state.get("_graph_store")
+    if graph_store is not None:
+        from app.retrieval.graph_search import graph_context_search
+
+        graph_ctx = await graph_context_search(question, graph_store)
+
     logger.info("researcher done", chunks=len(all_chunks), sub_queries=len(queries))
-    return {"retrieved_chunks": all_chunks}
+    return {"retrieved_chunks": all_chunks, "graph_context": graph_ctx}

@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     rerank_top_k: int = 5
     rrf_k: int = 60
 
+    neo4j_uri: str = ""
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = ""
+    graph_rag_enabled: bool = False
+
     log_level: str = "INFO"
     cors_origins: list[str] = ["http://localhost:8501", "http://localhost:5173"]
 

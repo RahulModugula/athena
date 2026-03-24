@@ -29,6 +29,7 @@ dependencies = [
     "structlog>=24.0.0",
     "httpx>=0.27.0",
     "sse-starlette>=2.0.0",
+    "neo4j>=5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -55,6 +56,7 @@ ignore = ["B008"]  # FastAPI Depends() in function defaults is intentional
 
 [tool.ruff.lint.per-file-ignores]
 "app/agents/*.py" = ["E501"]      # long prompt strings
+"app/graph/*.py" = ["E501"]       # long prompt strings
 "app/generation/prompts.py" = ["E501"]
 "app/api/routes.py" = ["E501"]
 "tests/*.py" = ["E501"]

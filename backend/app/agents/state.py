@@ -16,3 +16,4 @@ class ResearchState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     iteration: int
     max_iterations: int
+    graph_context: str
