@@ -50,6 +50,7 @@ jobs:
       - name: Test
         env:
           ATHENA_DATABASE_URL: postgresql+asyncpg://athena:athena@localhost:5432/athena
-          ATHENA_LLM_PROVIDER: anthropic
-          ATHENA_ANTHROPIC_API_KEY: placeholder
+          ATHENA_LLM_PROVIDER: openrouter
+          ATHENA_OPENROUTER_API_KEY: placeholder
+          ATHENA_OPENROUTER_MODEL: openai/gpt-oss-20b:free
         run: pytest tests/ -v --tb=short
