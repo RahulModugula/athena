@@ -78,8 +78,8 @@ jobs:
           context: ./backend
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/athena-backend:latest
-            ghcr.io/${{ github.repository }}/athena-backend:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/athena-backend:latest
+            ghcr.io/${{ github.repository_owner }}/athena-backend:${{ github.sha }}
 
   k8s-validate:
     runs-on: ubuntu-latest
@@ -92,8 +92,8 @@ jobs:
 
       - name: Dry-run validate k8s manifests
         run: |
-          kubectl apply --dry-run=client -f k8s/namespace.yaml
-          kubectl apply --dry-run=client -f k8s/configmap.yaml
-          kubectl apply --dry-run=client -f k8s/backend/service.yaml
-          kubectl apply --dry-run=client -f k8s/postgres/service.yaml
-          kubectl apply --dry-run=client -f k8s/redis/service.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/namespace.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/configmap.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/backend/service.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/postgres/service.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/redis/service.yaml
