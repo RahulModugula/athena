@@ -16,6 +16,7 @@ class RetrievalStrategy(StrEnum):
     DENSE = "dense"
     BM25 = "bm25"
     HYBRID = "hybrid"
+    HYDE = "hyde"  # Hypothetical Document Embeddings: embed a generated answer instead of the raw query
 
 
 class DocumentResponse(BaseModel):

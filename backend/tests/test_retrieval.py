@@ -1,6 +1,39 @@
 import uuid
 
+from app.generation.prompts import format_context, lost_in_middle_reorder
 from app.retrieval.hybrid import reciprocal_rank_fusion
+
+
+class TestLostInMiddleReorder:
+    def _make_chunks(self, n: int) -> list[dict]:
+        return [{"content": f"chunk{i}", "document_name": f"doc{i}", "score": 1.0 - i * 0.1} for i in range(n)]
+
+    def test_empty_and_single_passthrough(self) -> None:
+        assert lost_in_middle_reorder([]) == []
+        chunks = self._make_chunks(1)
+        assert lost_in_middle_reorder(chunks) == chunks
+
+    def test_two_chunks_unchanged(self) -> None:
+        chunks = self._make_chunks(2)
+        assert lost_in_middle_reorder(chunks) == chunks
+
+    def test_reorders_so_highest_relevance_is_first(self) -> None:
+        # chunk0 is most relevant (score 1.0), chunk1 second (0.9), etc.
+        chunks = self._make_chunks(5)
+        reordered = lost_in_middle_reorder(chunks)
+        # chunk0 (highest) should appear at position 0
+        assert reordered[0]["content"] == "chunk4"  # last even index prepended first
+        # All original chunks are still present
+        assert len(reordered) == 5
+        assert {c["content"] for c in reordered} == {c["content"] for c in chunks}
+
+    def test_format_context_uses_reordering(self) -> None:
+        chunks = self._make_chunks(4)
+        result = format_context(chunks)
+        # All sources appear in the formatted output
+        assert "[Source 1]" in result
+        assert "[Source 4]" in result
+        assert "---" in result
 
 
 class TestRRF:

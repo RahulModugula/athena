@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     rerank_top_k: int = 5
     rrf_k: int = 60
 
+    # Contextual Retrieval (Anthropic, Sep 2024): prepend an LLM-generated context
+    # snippet to each chunk at ingestion time. Reduces top-20 retrieval failures by
+    # ~49% at the cost of one LLM call per chunk (use a cheap/fast model).
+    # Set contextual_retrieval_model to a fast model (e.g. claude-haiku-4-20250514)
+    # to keep indexing costs low. Has no query-time overhead.
+    contextual_retrieval_enabled: bool = False
+    contextual_retrieval_model: str = "claude-haiku-4-20250514"
+
     neo4j_uri: str = ""
     neo4j_user: str = "neo4j"
     neo4j_password: str = ""
