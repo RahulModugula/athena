@@ -37,7 +37,7 @@ class ChunkResponse(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    question: str
+    question: str = Field(..., min_length=1, max_length=10_000)
     strategy: RetrievalStrategy = RetrievalStrategy.HYBRID
     top_k: int = Field(default=5, ge=1, le=50)
     document_ids: list[uuid.UUID] | None = None
@@ -59,7 +59,7 @@ class QueryResponse(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., min_length=1, max_length=10_000)
     strategy: RetrievalStrategy = RetrievalStrategy.HYBRID
     top_k: int = Field(default=10, ge=1, le=100)
 
@@ -116,7 +116,7 @@ class FactCheckResult(BaseModel):
 
 
 class ResearchRequest(BaseModel):
-    question: str
+    question: str = Field(..., min_length=1, max_length=10_000)
     max_iterations: int = Field(default=3, ge=1, le=5)
     strategy: RetrievalStrategy = RetrievalStrategy.HYBRID
 

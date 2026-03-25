@@ -6,6 +6,7 @@ import hashlib
 import time
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 import structlog
 from sqlalchemy import select, update
@@ -132,22 +133,59 @@ class TenantAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+async def _redis_is_rate_limited(
+    redis_client: Any, limit_key: str, rpm: int, now: float
+) -> tuple[bool, int]:
+    """Check and update rate limit using a Redis sorted set (sliding window).
+
+    Returns (is_limited, retry_after_seconds).
+    """
+    window_key = f"athena:rl:{limit_key}"
+    cutoff = now - 60.0
+    pipeline = redis_client.pipeline()
+    pipeline.zremrangebyscore(window_key, "-inf", cutoff)
+    pipeline.zcard(window_key)
+    pipeline.zadd(window_key, {str(now): now})
+    pipeline.expire(window_key, 61)
+    results = await pipeline.execute()
+    count_before_add = results[1]
+    if count_before_add >= rpm:
+        # Remove the timestamp we just added since we're rejecting
+        await redis_client.zrem(window_key, str(now))
+        return True, 61
+    return False, 0
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Sliding-window rate limiter keyed by tenant (or IP for unauthenticated).
 
-    Uses an in-process deque per key — good enough for single-replica.
+    Uses Redis when available (multi-replica safe) with in-process deque fallback.
     """
 
     def __init__(self, app, default_rpm: int = 60) -> None:
         super().__init__(app)
         self._default_rpm = default_rpm
+        # In-process fallback when Redis is unavailable
         self._windows: defaultdict[str, deque[float]] = defaultdict(deque)
 
     def _client_ip(self, request: Request) -> str:
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
-            return forwarded.split(",")[0].strip()
+            # Take the last IP added by a trusted proxy, not the first (spoofable)
+            parts = [p.strip() for p in forwarded.split(",")]
+            return parts[-1] if parts else "unknown"
         return request.client.host if request.client else "unknown"
+
+    def _in_memory_check(self, limit_key: str, rpm: int, now: float) -> tuple[bool, int]:
+        window = self._windows[limit_key]
+        cutoff = now - 60.0
+        while window and window[0] < cutoff:
+            window.popleft()
+        if len(window) >= rpm:
+            retry_after = int(60 - (now - window[0])) + 1
+            return True, retry_after
+        window.append(now)
+        return False, 0
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -165,19 +203,28 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         now = time.monotonic()
-        window = self._windows[limit_key]
+        is_limited = False
+        retry_after = 60
 
-        cutoff = now - 60.0
-        while window and window[0] < cutoff:
-            window.popleft()
+        # Prefer Redis for distributed rate limiting; fall back to in-process
+        cache = getattr(request.app.state, "cache", None)
+        redis_client = getattr(cache, "_client", None) if cache else None
+        if redis_client is not None:
+            try:
+                is_limited, retry_after = await _redis_is_rate_limited(
+                    redis_client, limit_key, rpm, now
+                )
+            except Exception as exc:
+                logger.warning("redis rate limit check failed, using in-memory", error=str(exc))
+                is_limited, retry_after = self._in_memory_check(limit_key, rpm, now)
+        else:
+            is_limited, retry_after = self._in_memory_check(limit_key, rpm, now)
 
-        if len(window) >= rpm:
-            retry_after = int(60 - (now - window[0])) + 1
+        if is_limited:
             return JSONResponse(
                 status_code=429,
                 content={"detail": "rate limit exceeded"},
                 headers={"Retry-After": str(retry_after)},
             )
 
-        window.append(now)
         return await call_next(request)

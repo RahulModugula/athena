@@ -53,7 +53,22 @@ jobs:
           ATHENA_LLM_PROVIDER: openrouter
           ATHENA_OPENROUTER_API_KEY: placeholder
           ATHENA_OPENROUTER_MODEL: openai/gpt-oss-20b:free
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
+
+      - name: Eval quality gate
+        if: github.event_name == 'pull_request'
+        env:
+          ATHENA_DATABASE_URL: postgresql+asyncpg://athena:athena@localhost:5432/athena
+          ATHENA_LLM_PROVIDER: openrouter
+          ATHENA_OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ATHENA_OPENROUTER_MODEL: openai/gpt-oss-20b:free
+        # Only runs when the secret is available (skips on forks)
+        run: |
+          if [ -n "$ATHENA_OPENROUTER_API_KEY" ] && [ "$ATHENA_OPENROUTER_API_KEY" != "placeholder" ]; then
+            python -m eval.runner --benchmark --fail-below faithfulness=0.70 answer_relevance=0.70
+          else
+            echo "Skipping eval gate — OPENROUTER_API_KEY not set"
+          fi
 
   docker:
     runs-on: ubuntu-latest

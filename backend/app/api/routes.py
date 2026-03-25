@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_embedder, get_reranker
 from app.config import settings
@@ -121,24 +120,36 @@ async def list_documents(
     db: AsyncSession = Depends(get_db),
 ) -> list[DocumentResponse]:
     tenant_id = _get_tenant_id(request)
-    query = (
+    doc_query = (
         select(Document)
-        .options(selectinload(Document.chunks))
         .offset(skip)
         .limit(limit)
         .order_by(Document.created_at.desc())
     )
     if tenant_id is not None:
-        query = query.where(Document.tenant_id == tenant_id)
-    result = await db.execute(query)
+        doc_query = doc_query.where(Document.tenant_id == tenant_id)
+    result = await db.execute(doc_query)
     docs = result.scalars().all()
+
+    if not docs:
+        return []
+
+    # Batch-load chunk counts in a single query instead of N per-doc loads
+    doc_ids = [d.id for d in docs]
+    count_result = await db.execute(
+        select(Chunk.document_id, func.count(Chunk.id).label("cnt"))
+        .where(Chunk.document_id.in_(doc_ids))
+        .group_by(Chunk.document_id)
+    )
+    chunk_counts = {row.document_id: row.cnt for row in count_result.all()}
+
     return [
         DocumentResponse(
             id=doc.id,
             filename=doc.filename,
             mime_type=doc.mime_type,
             metadata=doc.metadata_,
-            chunk_count=len(doc.chunks),
+            chunk_count=chunk_counts.get(doc.id, 0),
             created_at=doc.created_at,
         )
         for doc in docs
@@ -148,6 +159,7 @@ async def list_documents(
 @router.delete("/documents/{document_id}")
 async def delete_document(
     document_id: uuid.UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, bool]:
     result = await db.execute(select(Document).where(Document.id == document_id))
@@ -155,6 +167,10 @@ async def delete_document(
     if doc is None:
         raise HTTPException(404, "document not found")
     await db.delete(doc)
+    # Flush cached retrieval results so stale answers are not served
+    cache = getattr(request.app.state, "cache", None)
+    if cache is not None:
+        await cache.delete_pattern("athena:retrieval:*")
     return {"deleted": True}
 
 
@@ -205,17 +221,21 @@ async def query(
             strategy=req.strategy.value,
         )
 
-    chunk_dicts = []
-    for chunk, score in chunks_with_scores:
-        doc_result = await db.execute(select(Document).where(Document.id == chunk.document_id))
-        doc = doc_result.scalar_one_or_none()
-        chunk_dicts.append({
+    # Batch-load all referenced documents in one query to avoid N+1
+    doc_ids = {chunk.document_id for chunk, _ in chunks_with_scores}
+    doc_rows = await db.execute(select(Document).where(Document.id.in_(doc_ids)))
+    docs_by_id = {doc.id: doc for doc in doc_rows.scalars().all()}
+
+    chunk_dicts = [
+        {
             "chunk_id": chunk.id,
             "content": chunk.content,
-            "document_name": doc.filename if doc else "unknown",
+            "document_name": docs_by_id[chunk.document_id].filename if chunk.document_id in docs_by_id else "unknown",
             "chunk_index": chunk.chunk_index,
             "score": score,
-        })
+        }
+        for chunk, score in chunks_with_scores
+    ]
 
     answer = await generate_answer(req.question, chunk_dicts)
     latency_ms = (time.monotonic() - start) * 1000
@@ -260,17 +280,21 @@ async def query_stream(
         req.question, req.strategy, req.top_k, db, embedder, reranker, req.document_ids
     )
 
-    chunk_dicts = []
-    for chunk, score in chunks_with_scores:
-        doc_result = await db.execute(select(Document).where(Document.id == chunk.document_id))
-        doc = doc_result.scalar_one_or_none()
-        chunk_dicts.append({
+    # Batch-load all referenced documents in one query to avoid N+1
+    doc_ids = {chunk.document_id for chunk, _ in chunks_with_scores}
+    doc_rows = await db.execute(select(Document).where(Document.id.in_(doc_ids)))
+    docs_by_id = {doc.id: doc for doc in doc_rows.scalars().all()}
+
+    chunk_dicts = [
+        {
             "chunk_id": str(chunk.id),
             "content": chunk.content,
-            "document_name": doc.filename if doc else "unknown",
+            "document_name": docs_by_id[chunk.document_id].filename if chunk.document_id in docs_by_id else "unknown",
             "chunk_index": chunk.chunk_index,
             "score": score,
-        })
+        }
+        for chunk, score in chunks_with_scores
+    ]
 
     import json
 
@@ -518,28 +542,32 @@ async def research_stream(
     }
 
     async def event_stream() -> AsyncGenerator[str, None]:
-        async for event in graph.astream(initial_state, stream_mode="updates"):
-            for node_name, node_output in event.items():
-                if node_name == "researcher" and node_output.get("retrieved_chunks"):
-                    chunks = node_output["retrieved_chunks"]
-                    payload = [
-                        {
-                            "chunk_id": str(c.get("chunk_id", "")),
-                            "content": c.get("content", "")[:200],
-                            "document_name": c.get("document_name", ""),
-                            "score": c.get("score", 0.0),
-                        }
-                        for c in chunks
-                    ]
-                    yield f"data: {json.dumps({'type': 'retrieval', 'agent': node_name, 'data': payload})}\n\n"
-                elif node_name == "analyst" and node_output.get("analysis"):
-                    yield f"data: {json.dumps({'type': 'analysis', 'agent': node_name, 'data': node_output['analysis']})}\n\n"
-                elif node_name == "fact_checker" and node_output.get("fact_check_results") is not None:
-                    yield f"data: {json.dumps({'type': 'fact_check', 'agent': node_name, 'data': node_output['fact_check_results']})}\n\n"
-                elif node_name == "writer" and node_output.get("final_answer"):
-                    yield f"data: {json.dumps({'type': 'answer', 'agent': node_name, 'data': node_output['final_answer']})}\n\n"
-                else:
-                    yield f"data: {json.dumps({'type': 'agent_start', 'agent': node_name})}\n\n"
+        try:
+            async for event in graph.astream(initial_state, stream_mode="updates"):
+                for node_name, node_output in event.items():
+                    if node_name == "researcher" and node_output.get("retrieved_chunks"):
+                        chunks = node_output["retrieved_chunks"]
+                        payload = [
+                            {
+                                "chunk_id": str(c.get("chunk_id", "")),
+                                "content": c.get("content", "")[:200],
+                                "document_name": c.get("document_name", ""),
+                                "score": c.get("score", 0.0),
+                            }
+                            for c in chunks
+                        ]
+                        yield f"data: {json.dumps({'type': 'retrieval', 'agent': node_name, 'data': payload})}\n\n"
+                    elif node_name == "analyst" and node_output.get("analysis"):
+                        yield f"data: {json.dumps({'type': 'analysis', 'agent': node_name, 'data': node_output['analysis']})}\n\n"
+                    elif node_name == "fact_checker" and node_output.get("fact_check_results") is not None:
+                        yield f"data: {json.dumps({'type': 'fact_check', 'agent': node_name, 'data': node_output['fact_check_results']})}\n\n"
+                    elif node_name == "writer" and node_output.get("final_answer"):
+                        yield f"data: {json.dumps({'type': 'answer', 'agent': node_name, 'data': node_output['final_answer']})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'type': 'agent_start', 'agent': node_name})}\n\n"
+        except Exception as exc:
+            logger.error("research stream failed", error=str(exc))
+            yield f"data: {json.dumps({'type': 'error', 'data': 'research pipeline encountered an error'})}\n\n"
 
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

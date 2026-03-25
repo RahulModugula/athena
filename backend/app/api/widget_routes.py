@@ -100,7 +100,11 @@ async def widget_query(
             query_id=str(query_record.id),
         )
 
-    answer = await generate_answer(body.query, chunks)
+    try:
+        answer = await generate_answer(body.query, chunks)
+    except Exception as exc:
+        logger.error("widget answer generation failed", error=str(exc))
+        raise HTTPException(500, "answer generation failed") from exc
 
     sources = [
         WidgetSource(

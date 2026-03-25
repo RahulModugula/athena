@@ -1,6 +1,5 @@
 """Redis-based caching for embeddings and retrieval results."""
 
-import contextlib
 import hashlib
 import json
 from typing import Any
@@ -36,14 +35,30 @@ class CacheService:
         try:
             data = await self._client.get(key)
             return json.loads(data) if data else None
-        except Exception:
+        except Exception as exc:
+            logger.warning("cache get failed", key=key, error=str(exc))
             return None
 
     async def set(self, key: str, value: Any, ttl: int = 300) -> None:
         if not self._client:
             return
-        with contextlib.suppress(Exception):
+        try:
             await self._client.set(key, json.dumps(value), ex=ttl)
+        except Exception as exc:
+            logger.warning("cache set failed", key=key, error=str(exc))
+
+    async def delete_pattern(self, pattern: str) -> int:
+        """Delete all keys matching a glob pattern. Returns count deleted."""
+        if not self._client:
+            return 0
+        try:
+            keys = await self._client.keys(pattern)
+            if keys:
+                return await self._client.delete(*keys)
+            return 0
+        except Exception as exc:
+            logger.warning("cache delete_pattern failed", pattern=pattern, error=str(exc))
+            return 0
 
     @staticmethod
     def make_key(prefix: str, *parts: str) -> str:

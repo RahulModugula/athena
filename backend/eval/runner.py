@@ -166,9 +166,43 @@ def benchmark_chunking_strategies() -> None:
     print(f"\nResults saved to {best_path}")
 
 
+def _parse_fail_below(args: list[str]) -> dict[str, float]:
+    """Parse --fail-below metric=threshold ... from argv."""
+    thresholds: dict[str, float] = {}
+    collecting = False
+    for arg in args:
+        if arg == "--fail-below":
+            collecting = True
+            continue
+        if collecting and "=" in arg and not arg.startswith("--"):
+            metric, value = arg.split("=", 1)
+            thresholds[metric.strip()] = float(value.strip())
+        else:
+            collecting = False
+    return thresholds
+
+
 if __name__ == "__main__":
     if "--benchmark" in sys.argv:
-        benchmark_chunking_strategies()
+        # Run single-strategy eval with optional quality gate
+        thresholds = _parse_fail_below(sys.argv)
+        result = asyncio.run(run_evaluation())
+        if result and thresholds:
+            metrics = result.get("metrics", {})
+            failures = []
+            for metric, threshold in thresholds.items():
+                actual = metrics.get(metric, 0.0)
+                status = "PASS" if actual >= threshold else "FAIL"
+                print(f"  {status}  {metric}: {actual:.4f} (threshold {threshold:.2f})")
+                if actual < threshold:
+                    failures.append(f"{metric}={actual:.4f} < {threshold:.2f}")
+            if failures:
+                print(f"\nQuality gate FAILED: {', '.join(failures)}")
+                sys.exit(1)
+            else:
+                print("\nQuality gate PASSED")
+        else:
+            benchmark_chunking_strategies()
     else:
         result = asyncio.run(run_evaluation())
         print(json.dumps(result, indent=2))
