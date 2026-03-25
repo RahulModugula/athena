@@ -93,10 +93,12 @@ from prometheus_client import make_asgi_app  # noqa: E402
 
 from app.api.routes import router  # noqa: E402
 from app.api.tenant_routes import router as tenant_router  # noqa: E402
+from app.api.widget_routes import router as widget_router  # noqa: E402
 from app.mcp.server import mcp  # noqa: E402
 
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 app.include_router(router, prefix="/api")
 app.include_router(tenant_router, prefix="/api")
+app.include_router(widget_router, prefix="/api")
 app.mount("/mcp", mcp.sse_app())
