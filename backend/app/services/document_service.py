@@ -40,12 +40,18 @@ async def ingest_document(
     chunking_strategy: str,
     db: AsyncSession,
     embedder: EmbeddingService,
+    tenant_id: uuid.UUID | None = None,
     graph_store: Any = None,
     llm: Any = None,
+    source_url: str | None = None,
+    doc_version: str | None = None,
 ) -> Document:
     content_hash = hashlib.sha256(file_bytes).hexdigest()
 
-    existing = await db.execute(select(Document).where(Document.content_hash == content_hash))
+    dup_query = select(Document).where(Document.content_hash == content_hash)
+    if tenant_id is not None:
+        dup_query = dup_query.where(Document.tenant_id == tenant_id)
+    existing = await db.execute(dup_query)
     if existing.scalar_one_or_none():
         raise ValueError(f"document already ingested: {filename}")
 
@@ -61,9 +67,12 @@ async def ingest_document(
 
     doc = Document(
         id=uuid.uuid4(),
+        tenant_id=tenant_id,
         filename=filename,
         content_hash=content_hash,
         mime_type=mime_type,
+        source_url=source_url,
+        doc_version=doc_version,
         metadata_={"page_count": len(pages), "chunk_count": len(raw_chunks)},
     )
     db.add(doc)
@@ -76,6 +85,7 @@ async def ingest_document(
         for chunk, embedding in zip(batch, embeddings, strict=True):
             db_chunk = Chunk(
                 document_id=doc.id,
+                tenant_id=tenant_id,
                 content=chunk.content,
                 chunk_index=chunk.index,
                 token_count=chunk.token_count,
