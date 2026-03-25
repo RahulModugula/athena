@@ -36,6 +36,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         app.state.graph_store = None
 
+    import app.mcp._store_ref as _store_ref
+
+    _store_ref.graph_store = app.state.graph_store
+
     await log.ainfo("models loaded")
     yield
     await log.ainfo("shutting down athena")
@@ -67,5 +71,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 
 
 from app.api.routes import router  # noqa: E402
+from app.mcp.server import mcp  # noqa: E402
 
 app.include_router(router, prefix="/api")
+app.mount("/mcp", mcp.sse_app())
