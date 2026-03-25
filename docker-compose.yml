@@ -48,6 +48,16 @@ services:
       timeout: 3s
       retries: 3
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
   neo4j:
     image: neo4j:5-community
     profiles: [graphrag]

@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     neo4j_password: str = ""
     graph_rag_enabled: bool = False
 
+    redis_url: str = ""
+    cache_enabled: bool = False
+
     log_level: str = "INFO"
     cors_origins: list[str] = ["http://localhost:8501", "http://localhost:5173"]
 

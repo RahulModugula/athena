@@ -40,11 +40,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     _store_ref.graph_store = app.state.graph_store
 
+    if settings.cache_enabled and settings.redis_url:
+        from app.services.cache import CacheService
+
+        app.state.cache = CacheService(settings.redis_url)
+        await app.state.cache.connect()
+    else:
+        app.state.cache = None
+
     await log.ainfo("models loaded")
     yield
     await log.ainfo("shutting down athena")
     if app.state.graph_store is not None:
         await app.state.graph_store.close()
+    if app.state.cache is not None:
+        await app.state.cache.close()
 
 
 app = FastAPI(
@@ -70,8 +80,12 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
 
+from prometheus_client import make_asgi_app  # noqa: E402
+
 from app.api.routes import router  # noqa: E402
 from app.mcp.server import mcp  # noqa: E402
 
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
 app.include_router(router, prefix="/api")
 app.mount("/mcp", mcp.sse_app())
