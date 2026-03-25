@@ -9,6 +9,7 @@ class ChunkingStrategy(StrEnum):
     FIXED = "fixed"
     RECURSIVE = "recursive"
     SEMANTIC = "semantic"
+    DOCS = "docs"
 
 
 class RetrievalStrategy(StrEnum):

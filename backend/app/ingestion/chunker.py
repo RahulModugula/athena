@@ -139,10 +139,153 @@ class SemanticChunker(BaseChunker):
         return dot / (norm_a * norm_b)
 
 
+class DocsChunker(BaseChunker):
+    """Documentation-aware chunker that preserves code blocks and heading hierarchy.
+
+    Splits Markdown/HTML documentation by headings, keeps fenced code blocks
+    intact, and attaches heading path metadata to each chunk for richer search.
+    """
+
+    def __init__(self, chunk_size: int = 512, overlap: int = 100) -> None:
+        self.max_chars = chunk_size * 4
+        self.overlap_chars = overlap * 4
+        # Fallback splitter for oversized prose sections
+        self._fallback = RecursiveCharacterTextSplitter(
+            chunk_size=self.max_chars,
+            chunk_overlap=self.overlap_chars,
+            separators=["\n\n", "\n", ". ", " ", ""],
+            length_function=len,
+        )
+
+    def chunk(self, text: str, metadata: dict | None = None) -> list[Chunk]:
+        import re
+
+        metadata = metadata or {}
+        sections = self._split_by_headings(text)
+        chunks: list[Chunk] = []
+        idx = 0
+
+        for heading_path, section_text in sections:
+            # Split section into code blocks and prose segments
+            parts = re.split(r"(```[\s\S]*?```)", section_text)
+            for part in parts:
+                part = part.strip()
+                if not part:
+                    continue
+
+                is_code = part.startswith("```") and part.endswith("```")
+                language = ""
+                if is_code:
+                    first_line = part.split("\n", 1)[0]
+                    language = first_line.removeprefix("```").strip()
+
+                chunk_meta = {
+                    **metadata,
+                    "heading_path": heading_path,
+                    "has_code": is_code,
+                }
+                if language:
+                    chunk_meta["language"] = language
+
+                if len(part) <= self.max_chars:
+                    chunks.append(Chunk(
+                        content=part, index=idx,
+                        token_count=_estimate_tokens(part), metadata=chunk_meta,
+                    ))
+                    idx += 1
+                elif is_code:
+                    # Split large code blocks by blank lines / function boundaries
+                    for sub in self._split_large_code(part):
+                        chunks.append(Chunk(
+                            content=sub, index=idx,
+                            token_count=_estimate_tokens(sub), metadata=chunk_meta,
+                        ))
+                        idx += 1
+                else:
+                    for sub in self._fallback.split_text(part):
+                        sub = sub.strip()
+                        if sub:
+                            chunks.append(Chunk(
+                                content=sub, index=idx,
+                                token_count=_estimate_tokens(sub), metadata=chunk_meta,
+                            ))
+                            idx += 1
+
+        return chunks
+
+    @staticmethod
+    def _split_by_headings(text: str) -> list[tuple[str, str]]:
+        """Split text into (heading_path, section_body) pairs."""
+        import re
+
+        heading_pattern = re.compile(r"^(#{1,4})\s+(.+)$", re.MULTILINE)
+        matches = list(heading_pattern.finditer(text))
+
+        if not matches:
+            return [("", text)]
+
+        sections = []
+        heading_stack: list[tuple[int, str]] = []
+
+        for i, match in enumerate(matches):
+            level = len(match.group(1))
+            title = match.group(2).strip()
+
+            # Pop headings of same or deeper level
+            while heading_stack and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+            heading_stack.append((level, title))
+
+            heading_path = " > ".join(h[1] for _, h in enumerate(heading_stack))
+            start = match.end()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            body = text[start:end].strip()
+            if body:
+                sections.append((heading_path, body))
+
+        # Include any text before the first heading
+        if matches and matches[0].start() > 0:
+            preamble = text[: matches[0].start()].strip()
+            if preamble:
+                sections.insert(0, ("", preamble))
+
+        return sections
+
+    def _split_large_code(self, code_block: str) -> list[str]:
+        """Split a large fenced code block into smaller pieces."""
+        lines = code_block.split("\n")
+        # Remove fences
+        if lines and lines[0].startswith("```"):
+            fence_open = lines[0]
+            lines = lines[1:]
+        else:
+            fence_open = "```"
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+
+        pieces: list[str] = []
+        current: list[str] = []
+        current_len = 0
+
+        for line in lines:
+            current.append(line)
+            current_len += len(line) + 1
+            if current_len >= self.max_chars - 100:
+                pieces.append(fence_open + "\n" + "\n".join(current) + "\n```")
+                current = []
+                current_len = 0
+
+        if current:
+            pieces.append(fence_open + "\n" + "\n".join(current) + "\n```")
+
+        return pieces
+
+
 STRATEGY_MAP = {
     "fixed": FixedSizeChunker,
     "recursive": RecursiveChunker,
     "semantic": SemanticChunker,
+    "docs": DocsChunker,
 }
 
 
