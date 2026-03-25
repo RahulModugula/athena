@@ -16,10 +16,12 @@ class RetrievalService:
         db: AsyncSession,
         embedder: EmbeddingService,
         reranker: RerankerService,
+        tenant_id: uuid.UUID | None = None,
     ) -> None:
         self.db = db
         self.embedder = embedder
         self.reranker = reranker
+        self.tenant_id = tenant_id
 
     async def retrieve(
         self,
@@ -42,6 +44,7 @@ class RetrievalService:
                 "chunk_id": chunk.id,
                 "content": chunk.content,
                 "document_name": doc.filename if doc else "unknown",
+                "source_url": doc.source_url if doc else None,
                 "chunk_index": chunk.chunk_index,
                 "score": score,
             })
@@ -62,13 +65,18 @@ class RetrievalService:
 
         if strategy == RetrievalStrategy.DENSE:
             embedding = self.embedder.embed_query(question)
-            results = await dense_search(embedding, self.db, fetch_k, document_ids)
+            results = await dense_search(
+                embedding, self.db, fetch_k, document_ids, self.tenant_id
+            )
         elif strategy == RetrievalStrategy.BM25:
-            results = await bm25_search(question, self.db, fetch_k, document_ids)
+            results = await bm25_search(
+                question, self.db, fetch_k, document_ids, self.tenant_id
+            )
         else:
             embedding = self.embedder.embed_query(question)
             results = await hybrid_search(
-                question, embedding, self.db, fetch_k, settings.rrf_k, document_ids
+                question, embedding, self.db, fetch_k, settings.rrf_k,
+                document_ids, self.tenant_id,
             )
 
         if not results:

@@ -37,12 +37,13 @@ async def hybrid_search(
     top_k: int = 10,
     rrf_k: int = 60,
     document_ids: list | None = None,
+    tenant_id: uuid.UUID | None = None,
 ) -> list[tuple[Chunk, float]]:
     """Run dense + BM25 search, merge results with Reciprocal Rank Fusion."""
     fetch_k = top_k * 5  # over-fetch for better fusion
 
-    dense_results = await dense_search(query_embedding, db, fetch_k, document_ids)
-    bm25_results = await bm25_search(query_text, db, fetch_k, document_ids)
+    dense_results = await dense_search(query_embedding, db, fetch_k, document_ids, tenant_id)
+    bm25_results = await bm25_search(query_text, db, fetch_k, document_ids, tenant_id)
 
     dense_ranked = [(chunk.id, score) for chunk, score in dense_results]
     bm25_ranked = [(chunk.id, score) for chunk, score in bm25_results]
