@@ -76,10 +76,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.api.middleware import APIKeyMiddleware, RateLimitMiddleware  # noqa: E402
+from app.api.middleware import RateLimitMiddleware, TenantAuthMiddleware  # noqa: E402
 
-app.add_middleware(APIKeyMiddleware, api_keys=settings.api_keys)
-app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.rate_limit_per_minute)
+app.add_middleware(TenantAuthMiddleware)
+app.add_middleware(RateLimitMiddleware, default_rpm=settings.rate_limit_per_minute)
 
 
 @app.exception_handler(Exception)
@@ -92,9 +92,11 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 from prometheus_client import make_asgi_app  # noqa: E402
 
 from app.api.routes import router  # noqa: E402
+from app.api.tenant_routes import router as tenant_router  # noqa: E402
 from app.mcp.server import mcp  # noqa: E402
 
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 app.include_router(router, prefix="/api")
+app.include_router(tenant_router, prefix="/api")
 app.mount("/mcp", mcp.sse_app())

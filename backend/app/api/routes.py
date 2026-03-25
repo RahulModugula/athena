@@ -3,7 +3,7 @@ import uuid
 from collections.abc import AsyncGenerator
 
 import structlog
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +42,11 @@ logger = structlog.get_logger()
 
 router = APIRouter()
 
+
+def _get_tenant_id(request: Request) -> uuid.UUID | None:
+    """Extract tenant_id set by TenantAuthMiddleware (None for legacy/unauthenticated)."""
+    return getattr(request.state, "tenant_id", None)
+
 ALLOWED_MIME_TYPES = {
     "application/pdf",
     "text/plain",
@@ -64,6 +69,7 @@ async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse:
 
 @router.post("/documents/upload", response_model=DocumentResponse)
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     chunking_strategy: ChunkingStrategy = Form(ChunkingStrategy.RECURSIVE),
     db: AsyncSession = Depends(get_db),
@@ -79,6 +85,7 @@ async def upload_document(
     if len(file_bytes) > 50 * 1024 * 1024:
         raise HTTPException(400, "file too large (max 50MB)")
 
+    tenant_id = _get_tenant_id(request)
     try:
         doc = await ingest_document(
             file_bytes=file_bytes,
@@ -87,6 +94,7 @@ async def upload_document(
             chunking_strategy=chunking_strategy.value,
             db=db,
             embedder=embedder,
+            tenant_id=tenant_id,
         )
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
@@ -107,17 +115,22 @@ async def upload_document(
 
 @router.get("/documents", response_model=list[DocumentResponse])
 async def list_documents(
+    request: Request,
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
 ) -> list[DocumentResponse]:
-    result = await db.execute(
+    tenant_id = _get_tenant_id(request)
+    query = (
         select(Document)
         .options(selectinload(Document.chunks))
         .offset(skip)
         .limit(limit)
         .order_by(Document.created_at.desc())
     )
+    if tenant_id is not None:
+        query = query.where(Document.tenant_id == tenant_id)
+    result = await db.execute(query)
     docs = result.scalars().all()
     return [
         DocumentResponse(
@@ -146,11 +159,13 @@ async def delete_document(
 
 
 def get_retrieval_service(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     embedder: EmbeddingService = Depends(get_embedder),
     reranker: RerankerService = Depends(get_reranker),
 ) -> RetrievalService:
-    return RetrievalService(db=db, embedder=embedder, reranker=reranker)
+    tenant_id = _get_tenant_id(request)
+    return RetrievalService(db=db, embedder=embedder, reranker=reranker, tenant_id=tenant_id)
 
 
 async def _retrieve_chunks(
@@ -161,22 +176,25 @@ async def _retrieve_chunks(
     embedder: EmbeddingService,
     reranker: RerankerService,
     document_ids: list[uuid.UUID] | None = None,
+    tenant_id: uuid.UUID | None = None,
 ) -> list[tuple[Chunk, float]]:
-    svc = RetrievalService(db=db, embedder=embedder, reranker=reranker)
+    svc = RetrievalService(db=db, embedder=embedder, reranker=reranker, tenant_id=tenant_id)
     return await svc._retrieve_chunks(question, strategy, top_k, document_ids)
 
 
 @router.post("/query", response_model=QueryResponse)
 async def query(
     req: QueryRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     embedder: EmbeddingService = Depends(get_embedder),
     reranker: RerankerService = Depends(get_reranker),
 ) -> QueryResponse:
     start = time.monotonic()
+    tenant_id = _get_tenant_id(request)
 
     chunks_with_scores = await _retrieve_chunks(
-        req.question, req.strategy, req.top_k, db, embedder, reranker, req.document_ids
+        req.question, req.strategy, req.top_k, db, embedder, reranker, req.document_ids, tenant_id
     )
 
     if not chunks_with_scores:
@@ -203,6 +221,7 @@ async def query(
     latency_ms = (time.monotonic() - start) * 1000
 
     query_record = Query(
+        tenant_id=tenant_id,
         question=req.question,
         answer=answer,
         context_chunks=[c["chunk_id"] for c in chunk_dicts],
