@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Athena DevDocs Widget Demo</title>
+  <style>
+    body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; }
+    h1 { color: #111; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Documentation Page</h1>
+  <p>This is a sample documentation page demonstrating the Athena DevDocs widget.</p>
+  <p>Press <code>Cmd+K</code> (Mac) or <code>Ctrl+K</code> (Windows/Linux) to open the search widget, or click the button in the bottom-right corner.</p>
+
+  <h2>Getting Started</h2>
+  <p>To install the SDK, run:</p>
+  <pre><code>npm install @acme/sdk</code></pre>
+
+  <h2>Authentication</h2>
+  <p>Pass your API key in the <code>Authorization</code> header:</p>
+  <pre><code>curl -H "Authorization: Bearer YOUR_KEY" https://api.acme.com/v1/data</code></pre>
+
+  <!-- Athena DevDocs Widget -->
+  <script
+    src="dist/widget.js"
+    data-api-key="pk_demo_key"
+    data-api-url="http://localhost:8000"
+    data-theme="light"
+    data-accent-color="#6366f1"
+    async>
+  </script>
+</body>
+</html>
