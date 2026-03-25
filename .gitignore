@@ -41,3 +41,5 @@ ENV/
 Thumbs.db
 
 eval/results/*.json
+
+k8s/secrets.yaml

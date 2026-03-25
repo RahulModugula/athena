@@ -54,3 +54,46 @@ jobs:
           ATHENA_OPENROUTER_API_KEY: placeholder
           ATHENA_OPENROUTER_MODEL: openai/gpt-oss-20b:free
         run: pytest tests/ -v --tb=short
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/athena-backend:latest
+            ghcr.io/${{ github.repository }}/athena-backend:${{ github.sha }}
+
+  k8s-validate:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Dry-run validate k8s manifests
+        run: |
+          kubectl apply --dry-run=client -f k8s/namespace.yaml
+          kubectl apply --dry-run=client -f k8s/configmap.yaml
+          kubectl apply --dry-run=client -f k8s/backend/service.yaml
+          kubectl apply --dry-run=client -f k8s/postgres/service.yaml
+          kubectl apply --dry-run=client -f k8s/redis/service.yaml
