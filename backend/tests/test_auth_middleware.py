@@ -6,7 +6,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from app.api.middleware import APIKeyMiddleware, RateLimitMiddleware
+from app.api.middleware import TenantAuthMiddleware as APIKeyMiddleware, RateLimitMiddleware
 
 
 def _make_app(keys: list[str], rpm: int = 0) -> Starlette:
