@@ -29,7 +29,8 @@ Here is a chunk from the document:
 </chunk>
 
 In 1-2 sentences, describe what this chunk is about in the context of the full document. \
-Be specific about the subject matter. Do not start with "This chunk" — just describe the content directly."""
+Be specific about the subject matter. \
+Do not start with "This chunk" — just describe the content directly."""
 
 
 async def _generate_chunk_context(full_document: str, chunk_text: str) -> str:
@@ -132,10 +133,14 @@ async def ingest_document(
 
     # Contextual Retrieval: prepend LLM-generated context to each chunk before embedding.
     # This situates decontextualized chunks within their source document, reducing
-    # retrieval failures by ~49% (Anthropic, Sep 2024). Enabled via ATHENA_CONTEXTUAL_RETRIEVAL_ENABLED.
+    # retrieval failures by ~49% (Anthropic, Sep 2024).
+    # Enabled via ATHENA_CONTEXTUAL_RETRIEVAL_ENABLED.
     contextual_texts: list[str] = []
     if settings.contextual_retrieval_enabled and settings.anthropic_api_key:
-        logger.info("contextual retrieval enabled, generating chunk contexts", chunks=len(raw_chunks))
+        logger.info(
+            "contextual retrieval enabled, generating chunk contexts",
+            chunks=len(raw_chunks),
+        )
         context_tasks = [_generate_chunk_context(full_text, c.content) for c in raw_chunks]
         contexts = await asyncio.gather(*context_tasks)
         for chunk, ctx in zip(raw_chunks, contexts, strict=True):
