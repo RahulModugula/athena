@@ -33,7 +33,7 @@ class TenantResponse(BaseModel):
     name: str
     slug: str
     plan: str
-    settings: dict
+    settings: dict[str, object]
     created_at: str
 
 
@@ -78,7 +78,7 @@ def _get_tenant_id(request: Request) -> uuid.UUID:
     tid = getattr(request.state, "tenant_id", None)
     if tid is None:
         raise HTTPException(401, "authentication required")
-    return tid
+    return uuid.UUID(str(tid))
 
 
 # ---------------------------------------------------------------------------

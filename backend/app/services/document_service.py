@@ -55,7 +55,7 @@ async def _generate_chunk_context(full_document: str, chunk_text: str) -> str:
             model_name=model,
             api_key=SecretStr(settings.anthropic_api_key),
             temperature=0.0,
-            max_tokens=150,
+            max_tokens_to_sample=150,
             timeout=None,
             stop=None,
         )

@@ -64,7 +64,7 @@ def _require_tenant(request: Request) -> uuid.UUID:
     tid = getattr(request.state, "tenant_id", None)
     if tid is None:
         raise HTTPException(401, "valid publishable key required")
-    return tid
+    return uuid.UUID(str(tid))
 
 
 @router.post("/widget/query", response_model=WidgetAnswer)
@@ -108,9 +108,9 @@ async def widget_query(
 
     sources = [
         WidgetSource(
-            title=c.get("document_name", ""),
-            url=c.get("source_url"),
-            snippet=c["content"][:200],
+            title=str(c.get("document_name", "")),
+            url=str(c["source_url"]) if c.get("source_url") is not None else None,
+            snippet=str(c["content"])[:200],
             chunk_id=str(c["chunk_id"]),
         )
         for c in chunks

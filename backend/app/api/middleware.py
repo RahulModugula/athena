@@ -162,7 +162,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     Uses Redis when available (multi-replica safe) with in-process deque fallback.
     """
 
-    def __init__(self, app, default_rpm: int = 60) -> None:
+    def __init__(self, app: Any, default_rpm: int = 60) -> None:
         super().__init__(app)
         self._default_rpm = default_rpm
         # In-process fallback when Redis is unavailable
