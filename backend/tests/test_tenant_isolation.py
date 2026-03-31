@@ -5,6 +5,7 @@ results. They use mocked DB/ML dependencies to focus on the isolation logic.
 """
 
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -62,9 +63,6 @@ def mock_reranker() -> MagicMock:
     rr = MagicMock()
     rr.rerank.return_value = []
     return rr
-
-
-from contextlib import asynccontextmanager
 
 
 @asynccontextmanager
