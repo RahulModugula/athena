@@ -64,28 +64,32 @@ def mock_reranker() -> MagicMock:
     return rr
 
 
-def _client_for_tenant(
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _client_for_tenant(
     tenant_id: uuid.UUID | None,
     mock_db: AsyncMock,
     mock_embedder: MagicMock,
     mock_reranker: MagicMock,
-) -> AsyncClient:
+):
     from app.main import app
 
     async def _override_db():
         yield mock_db
 
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[get_embedder] = lambda req: mock_embedder
-    app.dependency_overrides[get_reranker] = lambda req: mock_reranker
+    app.dependency_overrides[get_embedder] = lambda: mock_embedder
+    app.dependency_overrides[get_reranker] = lambda: mock_reranker
 
-    # Inject tenant_id into request state via middleware bypass
-    original_dispatch = app.middleware_stack  # noqa: F841
-
-    async def _set_tenant(request, call_next):
+    async def _set_tenant(self, request, call_next):
         request.state.tenant_id = tenant_id
         request.state.tenant = None
         return await call_next(request)
+
+    # Reset the middleware stack so the patched dispatch is picked up fresh
+    app.middleware_stack = None
 
     with (
         patch("app.ingestion.embedder.EmbeddingService"),
@@ -93,7 +97,13 @@ def _client_for_tenant(
         patch("app.observability.logging.configure_logging"),
         patch("app.api.middleware.TenantAuthMiddleware.dispatch", _set_tenant),
     ):
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            yield ac
+
+    app.middleware_stack = None
+    app.dependency_overrides.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +122,10 @@ class TestListDocumentsIsolation:
         _make_doc(TENANT_B, "tenant_b_doc.pdf")  # exists but must not appear
 
         mock_db = AsyncMock()
-        # First execute call returns documents (filtered to tenant A only)
-        mock_db.execute.return_value.scalars.return_value.all.return_value = [doc_a]
-        # Second execute call returns chunk counts
-        mock_db.execute.return_value.all.return_value = []
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [doc_a]
+        result.all.return_value = []
+        mock_db.execute = AsyncMock(return_value=result)
 
         async with _client_for_tenant(TENANT_A, mock_db, mock_embedder, mock_reranker) as ac:
             response = await ac.get("/api/documents")
@@ -133,8 +143,10 @@ class TestListDocumentsIsolation:
         doc_b = _make_doc(TENANT_B, "tenant_b_doc.pdf")
 
         mock_db = AsyncMock()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = [doc_b]
-        mock_db.execute.return_value.all.return_value = []
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [doc_b]
+        result.all.return_value = []
+        mock_db.execute = AsyncMock(return_value=result)
 
         async with _client_for_tenant(TENANT_B, mock_db, mock_embedder, mock_reranker) as ac:
             response = await ac.get("/api/documents")
@@ -150,8 +162,10 @@ class TestListDocumentsIsolation:
     ) -> None:
         """tenant_id=None means no WHERE filter — global view (single-user mode)."""
         mock_db = AsyncMock()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = []
-        mock_db.execute.return_value.all.return_value = []
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        result.all.return_value = []
+        mock_db.execute = AsyncMock(return_value=result)
 
         async with _client_for_tenant(None, mock_db, mock_embedder, mock_reranker) as ac:
             response = await ac.get("/api/documents")
@@ -173,8 +187,10 @@ class TestQueryIsolation:
     ) -> None:
         """When _retrieve_chunks is called it should receive tenant_a's ID."""
         mock_db = AsyncMock()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = []
-        mock_db.execute.return_value.all.return_value = []
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        result.all.return_value = []
+        mock_db.execute = AsyncMock(return_value=result)
 
         captured: list[uuid.UUID | None] = []
 
@@ -197,7 +213,10 @@ class TestQueryIsolation:
         mock_reranker: MagicMock,
     ) -> None:
         mock_db = AsyncMock()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        result.all.return_value = []
+        mock_db.execute = AsyncMock(return_value=result)
 
         captured: list[uuid.UUID | None] = []
 
@@ -224,8 +243,10 @@ class TestQueryIsolation:
         doc_a.id = doc_a_id
 
         mock_db = AsyncMock()
-        # Return tenant_a's document when looking up by ID
-        mock_db.execute.return_value.scalars.return_value.all.return_value = [doc_a]
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [doc_a]
+        result.all.return_value = []
+        mock_db.execute = AsyncMock(return_value=result)
 
         # _retrieve_chunks returns chunk belonging to tenant_a (simulates a bug
         # in retrieval that accidentally crosses tenant boundary)

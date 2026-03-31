@@ -36,10 +36,14 @@ def mock_reranker() -> MagicMock:
 @pytest.fixture
 def mock_db() -> AsyncMock:
     db = AsyncMock()
-    # scalar_one() returns 0 by default (document counts etc.)
-    db.execute.return_value.scalar_one.return_value = 0
-    db.execute.return_value.scalar_one_or_none.return_value = None
-    db.execute.return_value.scalars.return_value.all.return_value = []
+    # Use a plain MagicMock for the result so .scalar_one(), .scalars().all()
+    # etc. are synchronous (matching the real SQLAlchemy Result interface).
+    result = MagicMock()
+    result.scalar_one.return_value = 0
+    result.scalar_one_or_none.return_value = None
+    result.scalars.return_value.all.return_value = []
+    result.all.return_value = []
+    db.execute = AsyncMock(return_value=result)
     return db
 
 
@@ -51,8 +55,8 @@ async def client(mock_db: AsyncMock, mock_embedder: MagicMock, mock_reranker: Ma
         yield mock_db
 
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[get_embedder] = lambda req: mock_embedder
-    app.dependency_overrides[get_reranker] = lambda req: mock_reranker
+    app.dependency_overrides[get_embedder] = lambda: mock_embedder
+    app.dependency_overrides[get_reranker] = lambda: mock_reranker
 
     # Prevent lifespan from loading heavy ML models
     with (
@@ -106,7 +110,7 @@ class TestDocumentUpload:
         assert response.status_code == 400
 
     async def test_duplicate_returns_409(self, client: AsyncClient) -> None:
-        with patch("app.services.document_service.ingest_document") as mock_ingest:
+        with patch("app.api.routes.ingest_document") as mock_ingest:
             mock_ingest.side_effect = ValueError("document already exists")
             response = await client.post(
                 "/api/documents/upload",
@@ -125,7 +129,7 @@ class TestDocumentUpload:
 
         mock_db.execute.return_value.scalar_one.return_value = 5  # chunk count
 
-        with patch("app.services.document_service.ingest_document", AsyncMock(return_value=mock_doc)):
+        with patch("app.api.routes.ingest_document", AsyncMock(return_value=mock_doc)):
             response = await client.post(
                 "/api/documents/upload",
                 files={"file": ("test.txt", b"some document content", "text/plain")},
@@ -206,12 +210,14 @@ class TestQuery:
         mock_chunk.document_id = uuid.uuid4()
 
         mock_doc = MagicMock()
+        mock_doc.id = mock_chunk.document_id
         mock_doc.filename = "rag.pdf"
-        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_doc
+        # The route batch-loads documents via scalars().all()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_doc]
 
         with (
             patch("app.api.routes._retrieve_chunks", AsyncMock(return_value=[(mock_chunk, 0.9)])),
-            patch("app.generation.chain.generate_answer", AsyncMock(return_value="RAG is great.")),
+            patch("app.api.routes.generate_answer", AsyncMock(return_value="RAG is great.")),
         ):
             response = await client.post(
                 "/api/query",
