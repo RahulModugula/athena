@@ -59,8 +59,14 @@ class RetrievalService:
             {
                 "chunk_id": chunk.id,
                 "content": chunk.content,
-                "document_name": docs_by_id[chunk.document_id].filename if chunk.document_id in docs_by_id else "unknown",
-                "source_url": docs_by_id[chunk.document_id].source_url if chunk.document_id in docs_by_id else None,
+                "document_name": (
+                    docs_by_id[chunk.document_id].filename
+                    if chunk.document_id in docs_by_id else "unknown"
+                ),
+                "source_url": (
+                    docs_by_id[chunk.document_id].source_url
+                    if chunk.document_id in docs_by_id else None
+                ),
                 "chunk_index": chunk.chunk_index,
                 "score": score,
             }
