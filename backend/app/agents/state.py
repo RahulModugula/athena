@@ -17,3 +17,10 @@ class ResearchState(TypedDict):
     iteration: int
     max_iterations: int
     graph_context: str
+    # Verification fields (Pillar 3-4)
+    verified_sentences: list[dict[str, Any]]  # VerifiedSentence objects
+    trust_score: float  # Overall answer trust score
+    verification_passed: bool
+    weak_claims: list[str]  # Claims to retry on if verification fails
+    _retrieval_service: Any  # Passed by routes for retry logic
+    _graph_store: Any  # Optional graph store for entity retrieval

@@ -538,7 +538,12 @@ async def research_stream(
         "messages": [],
         "iteration": 0,
         "max_iterations": req.max_iterations,
+        "verified_sentences": [],
+        "trust_score": 0.0,
+        "verification_passed": False,
+        "weak_claims": [],
         "_retrieval_service": retrieval_svc,
+        "_graph_store": None,
     }
 
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -563,6 +568,14 @@ async def research_stream(
                         yield f"data: {json.dumps({'type': 'fact_check', 'agent': node_name, 'data': node_output['fact_check_results']})}\n\n"
                     elif node_name == "writer" and node_output.get("final_answer"):
                         yield f"data: {json.dumps({'type': 'answer', 'agent': node_name, 'data': node_output['final_answer']})}\n\n"
+                    elif node_name == "verifier" and node_output.get("verified_sentences") is not None:
+                        verification_data = {
+                            "verified_sentences": node_output.get("verified_sentences", []),
+                            "trust_score": node_output.get("trust_score", 0.0),
+                            "verification_passed": node_output.get("verification_passed", False),
+                            "weak_claims": node_output.get("weak_claims", []),
+                        }
+                        yield f"data: {json.dumps({'type': 'verification', 'agent': node_name, 'data': verification_data})}\n\n"
                     else:
                         yield f"data: {json.dumps({'type': 'agent_start', 'agent': node_name})}\n\n"
         except Exception as exc:

@@ -19,14 +19,32 @@ class SubQueries(BaseModel):
 async def researcher_node(state: ResearchState) -> dict:
     question = state["question"]
     plan = state.get("plan", "")
-    logger.info("researcher retrieving", question=question[:80])
+    weak_claims = state.get("weak_claims", [])
+    iteration = state.get("iteration", 0)
+    logger.info("researcher retrieving", question=question[:80], iteration=iteration, weak_claims=len(weak_claims))
 
     llm = get_agent_llm()
     structured = llm.with_structured_output(SubQueries)
-    messages = [
-        SystemMessage(content=DECOMPOSE_SYSTEM),
-        HumanMessage(content=f"Question: {question}\nPlan: {plan}"),
-    ]
+
+    # If retrying, bias decomposition toward weak claims
+    if weak_claims and iteration > 0:
+        decompose_prompt = f"""You are a research assistant. The previous retrieval failed to support these claims:
+
+{chr(10).join(f"- {claim}" for claim in weak_claims[:3])}
+
+Given the original question and what failed, decompose into 2-3 targeted sub-queries that specifically search for evidence to support those weak claims.
+
+Return only the sub-queries as a JSON list of strings."""
+        messages = [
+            SystemMessage(content=decompose_prompt),
+            HumanMessage(content=f"Original question: {question}"),
+        ]
+    else:
+        messages = [
+            SystemMessage(content=DECOMPOSE_SYSTEM),
+            HumanMessage(content=f"Question: {question}\nPlan: {plan}"),
+        ]
+
     decomposed: SubQueries = await structured.ainvoke(messages)
 
     # Lazy import to avoid circular deps at module load time
@@ -57,4 +75,8 @@ async def researcher_node(state: ResearchState) -> dict:
         graph_ctx = await graph_context_search(question, graph_store)
 
     logger.info("researcher done", chunks=len(all_chunks), sub_queries=len(queries))
-    return {"retrieved_chunks": all_chunks, "graph_context": graph_ctx}
+    return {
+        "retrieved_chunks": all_chunks,
+        "graph_context": graph_ctx,
+        "iteration": iteration + 1,
+    }
