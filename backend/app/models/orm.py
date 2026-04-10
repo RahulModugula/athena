@@ -92,6 +92,7 @@ class Document(Base):
     source_url: Mapped[str | None] = mapped_column(String, nullable=True)
     source_etag: Mapped[str | None] = mapped_column(String, nullable=True)
     doc_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -124,6 +125,9 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
     chunking_strategy: Mapped[str] = mapped_column(String, nullable=False)
+    start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_text_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     embedding = mapped_column(Vector(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

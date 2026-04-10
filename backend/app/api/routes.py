@@ -572,3 +572,47 @@ async def research_stream(
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/documents/{document_id}/spans")
+async def get_document_span(
+    document_id: str,
+    start: int,
+    end: int,
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+) -> dict:
+    """Retrieve an exact span from a document using character offsets.
+
+    Used to verify citations by fetching the exact substring that supports a claim.
+    Offsets are relative to the raw_text stored on the Document.
+    """
+    tenant_id = _get_tenant_id(request)
+
+    # Fetch the document
+    doc_query = select(Document).where(Document.id == document_id)
+    if tenant_id is not None:
+        doc_query = doc_query.where(Document.tenant_id == tenant_id)
+    result = await db.execute(doc_query)
+    doc = result.scalar_one_or_none()
+
+    if doc is None:
+        raise HTTPException(404, "document not found")
+
+    if doc.raw_text is None:
+        raise HTTPException(
+            400, "document does not have raw_text available for span recovery"
+        )
+
+    # Validate offsets
+    if start < 0 or end > len(doc.raw_text) or start > end:
+        raise HTTPException(400, "invalid offsets: out of bounds or reversed")
+
+    span_text = doc.raw_text[start:end]
+    return {
+        "document_id": str(doc.id),
+        "start": start,
+        "end": end,
+        "text": span_text,
+        "length": len(span_text),
+    }

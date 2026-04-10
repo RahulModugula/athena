@@ -127,6 +127,7 @@ async def ingest_document(
         mime_type=mime_type,
         source_url=source_url,
         doc_version=doc_version,
+        raw_text=full_text,  # Store immutable source for span recovery
         metadata_={"page_count": len(pages), "chunk_count": len(raw_chunks)},
     )
     db.add(doc)
@@ -157,6 +158,8 @@ async def ingest_document(
         embeddings = embedder.embed_texts(embed_texts)
 
         for chunk, embed_text, embedding in zip(batch, embed_texts, embeddings, strict=True):
+            # Compute text hash for verification
+            text_hash = hashlib.sha256(chunk.content.encode()).hexdigest()
             db_chunk = Chunk(
                 document_id=doc.id,
                 tenant_id=tenant_id,
@@ -164,6 +167,9 @@ async def ingest_document(
                 chunk_index=chunk.index,
                 token_count=chunk.token_count,
                 chunking_strategy=chunking_strategy,
+                start_offset=chunk.start_offset,  # Character offsets in source document
+                end_offset=chunk.end_offset,
+                source_text_hash=text_hash,
                 metadata_=chunk.metadata,
                 embedding=embedding,
             )

@@ -13,6 +13,8 @@ class Chunk:
     index: int
     token_count: int
     metadata: dict
+    start_offset: int | None = None
+    end_offset: int | None = None
 
 
 def _estimate_tokens(text: str) -> int:
@@ -36,14 +38,19 @@ class FixedSizeChunker(BaseChunker):
         start = 0
         idx = 0
         while start < len(text):
-            end = start + self.chunk_size
+            end = min(start + self.chunk_size, len(text))
             chunk_text = text[start:end].strip()
             if chunk_text:
+                # Find exact offsets in original text
+                offset_start = text.find(chunk_text, start)
+                offset_end = offset_start + len(chunk_text)
                 chunks.append(Chunk(
                     content=chunk_text,
                     index=idx,
                     token_count=_estimate_tokens(chunk_text),
                     metadata=metadata,
+                    start_offset=offset_start,
+                    end_offset=offset_end,
                 ))
                 idx += 1
             start += self.chunk_size - self.overlap
@@ -62,15 +69,23 @@ class RecursiveChunker(BaseChunker):
     def chunk(self, text: str, metadata: dict | None = None) -> list[Chunk]:
         metadata = metadata or {}
         splits = self.splitter.split_text(text)
-        return [
-            Chunk(
-                content=s.strip(),
-                index=i,
+        chunks = []
+        for i, s in enumerate(splits):
+            s_stripped = s.strip()
+            if not s_stripped:
+                continue
+            # Find the stripped chunk in the original text
+            offset_start = text.find(s_stripped)
+            offset_end = offset_start + len(s_stripped) if offset_start != -1 else -1
+            chunks.append(Chunk(
+                content=s_stripped,
+                index=len(chunks),
                 token_count=_estimate_tokens(s),
                 metadata=metadata,
-            )
-            for i, s in enumerate(splits) if s.strip()
-        ]
+                start_offset=offset_start if offset_start != -1 else None,
+                end_offset=offset_end if offset_end != -1 else None,
+            ))
+        return chunks
 
 
 class SemanticChunker(BaseChunker):
@@ -84,7 +99,8 @@ class SemanticChunker(BaseChunker):
         sentences = self._split_sentences(text)
         if len(sentences) < 2:
             return [Chunk(
-                content=text, index=0, token_count=_estimate_tokens(text), metadata=metadata
+                content=text, index=0, token_count=_estimate_tokens(text),
+                metadata=metadata, start_offset=0, end_offset=len(text),
             )]
 
         from app.ingestion.embedder import EmbeddingService
@@ -100,11 +116,16 @@ class SemanticChunker(BaseChunker):
             current_text = " ".join(current_sentences)
 
             if similarity < self.threshold and len(current_text) >= self.min_chunk_size:
+                current_text_stripped = current_text.strip()
+                offset_start = text.find(current_text_stripped)
+                offset_end = offset_start + len(current_text_stripped) if offset_start != -1 else -1
                 chunks.append(Chunk(
-                    content=current_text.strip(),
+                    content=current_text_stripped,
                     index=idx,
                     token_count=_estimate_tokens(current_text),
                     metadata=metadata,
+                    start_offset=offset_start if offset_start != -1 else None,
+                    end_offset=offset_end if offset_end != -1 else None,
                 ))
                 idx += 1
                 current_sentences = []
@@ -114,11 +135,15 @@ class SemanticChunker(BaseChunker):
         if current_sentences:
             final_text = " ".join(current_sentences).strip()
             if final_text:
+                offset_start = text.find(final_text)
+                offset_end = offset_start + len(final_text) if offset_start != -1 else -1
                 chunks.append(Chunk(
                     content=final_text,
                     index=idx,
-                    token_count=_estimate_tokens(final_text),
+                    token_count=_estimate_tokens(" ".join(current_sentences)),
                     metadata=metadata,
+                    start_offset=offset_start if offset_start != -1 else None,
+                    end_offset=offset_end if offset_end != -1 else None,
                 ))
 
         return chunks
@@ -188,26 +213,38 @@ class DocsChunker(BaseChunker):
                     chunk_meta["language"] = language
 
                 if len(part) <= self.max_chars:
+                    offset_start = text.find(part)
+                    offset_end = offset_start + len(part) if offset_start != -1 else -1
                     chunks.append(Chunk(
                         content=part, index=idx,
                         token_count=_estimate_tokens(part), metadata=chunk_meta,
+                        start_offset=offset_start if offset_start != -1 else None,
+                        end_offset=offset_end if offset_end != -1 else None,
                     ))
                     idx += 1
                 elif is_code:
                     # Split large code blocks by blank lines / function boundaries
                     for sub in self._split_large_code(part):
+                        offset_start = text.find(sub)
+                        offset_end = offset_start + len(sub) if offset_start != -1 else -1
                         chunks.append(Chunk(
                             content=sub, index=idx,
                             token_count=_estimate_tokens(sub), metadata=chunk_meta,
+                            start_offset=offset_start if offset_start != -1 else None,
+                            end_offset=offset_end if offset_end != -1 else None,
                         ))
                         idx += 1
                 else:
                     for sub in self._fallback.split_text(part):
                         sub = sub.strip()
                         if sub:
+                            offset_start = text.find(sub)
+                            offset_end = offset_start + len(sub) if offset_start != -1 else -1
                             chunks.append(Chunk(
                                 content=sub, index=idx,
                                 token_count=_estimate_tokens(sub), metadata=chunk_meta,
+                                start_offset=offset_start if offset_start != -1 else None,
+                                end_offset=offset_end if offset_end != -1 else None,
                             ))
                             idx += 1
 
