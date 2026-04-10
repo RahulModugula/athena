@@ -1,24 +1,39 @@
+import json
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.llm import get_agent_llm
 from app.agents.state import ResearchState
 from app.generation.prompts import format_context
+from app.verification.models import VerifiedAnswerDraft
 
 logger = structlog.get_logger()
 
-WRITER_SYSTEM = """You are a research writer. Synthesize a clear, accurate, and well-cited answer from:
-- The original question
-- The analyst's findings
-- The fact-checker's verification results
-- The original source passages
+WRITER_SYSTEM = """You are a research writer. Synthesize a clear, accurate, and well-cited answer.
+
+IMPORTANT: Respond with ONLY valid JSON in this exact format:
+{
+  "sentences": [
+    {
+      "text": "The claim or sentence.",
+      "citations": [
+        {"chunk_id": "uuid-of-chunk", "start": 100, "end": 150}
+      ]
+    }
+  ]
+}
+
+For each sentence:
+1. Write a clear claim
+2. Cite the exact chunks and character offsets that support it
+3. Use only claims supported by the source passages
+4. Each offset range must point to real text in the cited chunk
 
 Guidelines:
-- Use [Source N] citations for every factual claim
-- Only state things supported by the sources
-- Flag any claims the fact-checker marked as unsupported
-- Write in clear, professional prose
-- Aim for 150-300 words"""
+- Only write sentences supported by retrieved chunks
+- Use true chunk IDs and valid offsets
+- Aim for 3-5 sentences total
+- Never include commentary or explanation outside the JSON"""
 
 
 async def writer_node(state: ResearchState) -> dict:
@@ -30,28 +45,47 @@ async def writer_node(state: ResearchState) -> dict:
 
     context = format_context(chunks) if chunks else "No sources available."
 
-    unsupported = [
-        fc["claim"] for fc in fact_checks if not fc.get("supported", True)
-    ]
-    unsupported_note = ""
-    if unsupported:
-        unsupported_note = "\n\nNote — these claims could NOT be verified in the sources:\n" + "\n".join(
-            f"- {c}" for c in unsupported
-        )
+    # Build chunk reference for writer
+    chunk_refs = "\n".join(
+        f"Chunk {i}: ID={c.get('chunk_id', '')}, content={c.get('content', '')[:100]}..."
+        for i, c in enumerate(chunks[:10])
+    )
 
     llm = get_agent_llm()
+    structured_llm = llm.with_structured_output(VerifiedAnswerDraft)
+
     messages = [
         SystemMessage(content=WRITER_SYSTEM),
         HumanMessage(
             content=(
                 f"Question: {question}\n\n"
-                f"Analysis:\n{analysis}{unsupported_note}\n\n"
-                f"Sources:\n{context}"
+                f"Analysis:\n{analysis}\n\n"
+                f"Available chunks for citation:\n{chunk_refs}"
             )
         ),
     ]
-    response = await llm.ainvoke(messages)
-    final_answer = str(response.content)
+
+    try:
+        response = await structured_llm.ainvoke(messages)
+        draft = response
+        # Convert back to JSON for storage
+        final_answer = json.dumps(draft.model_dump())
+    except Exception as e:
+        logger.warning("structured output failed, falling back to freeform", error=str(e))
+        # Fallback: unstructured answer
+        unstructured_llm = llm
+        messages_fallback = [
+            SystemMessage(content="You are a research writer. Write a concise answer."),
+            HumanMessage(
+                content=(
+                    f"Question: {question}\n\n"
+                    f"Analysis:\n{analysis}\n\n"
+                    f"Sources:\n{context}"
+                )
+            ),
+        ]
+        response = await unstructured_llm.ainvoke(messages_fallback)
+        final_answer = str(response.content)
 
     sources = [
         {
