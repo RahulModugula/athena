@@ -1,11 +1,13 @@
 """Parse structured citations from writer output."""
 
 import json
-import re
+import re  # Used for sentence splitting
+from typing import Any
+
 import structlog
 from pydantic import ValidationError
 
-from app.verification.models import VerifiedAnswerDraft, CitationSpan
+from app.verification.models import VerifiedAnswerDraft
 
 logger = structlog.get_logger()
 
@@ -51,16 +53,15 @@ def extract_citations_fallback(text: str) -> VerifiedAnswerDraft | None:
     if not sentences:
         return None
 
-    parsed_sentences = []
-    source_pattern = re.compile(r'\[Source\s+(\d+)\]')
+    parsed_sentences: list[dict[str, Any]] = []
 
     for sent in sentences:
         if not sent.strip():
             continue
 
         # Extract source references
-        matches = source_pattern.findall(sent)
-        # This is incomplete since we don't have chunk IDs — just return empty
+        # Note: incomplete extraction — we don't have chunk IDs from freeform text
+        # This is a fallback only; prefer JSON parsing above
         parsed_sentences.append({
             "text": sent.strip(),
             "citations": [],

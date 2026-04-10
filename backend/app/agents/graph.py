@@ -18,7 +18,6 @@ def _should_retry(state: ResearchState) -> str:
     Returns 'researcher' if we should retry with weak claims,
     otherwise returns 'END'.
     """
-    trust_score = state.get("trust_score", 0.0)
     verification_passed = state.get("verification_passed", True)
     iteration = state.get("iteration", 0)
     max_iterations = state.get("max_iterations", 1)

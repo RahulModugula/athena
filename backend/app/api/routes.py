@@ -592,8 +592,8 @@ async def get_document_span(
     document_id: str,
     start: int,
     end: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    request: Request = None,
 ) -> dict:
     """Retrieve an exact span from a document using character offsets.
 

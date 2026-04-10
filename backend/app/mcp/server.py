@@ -26,6 +26,12 @@ async def athena_research_question(question: str, max_iterations: int = 3) -> di
         "iteration": 0,
         "max_iterations": max_iterations,
         "graph_context": "",
+        "verified_sentences": [],
+        "trust_score": 0.0,
+        "verification_passed": False,
+        "weak_claims": [],
+        "_retrieval_service": None,
+        "_graph_store": None,
     }
     result = await research_graph.ainvoke(state)
     return {"answer": result.get("final_answer", ""), "sources": result.get("sources", [])}

@@ -1,5 +1,7 @@
 """Pydantic models for citation verification pipeline."""
 
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -31,4 +33,5 @@ class VerifiedAnswer(BaseModel):
 
 class VerifiedAnswerDraft(BaseModel):
     """Writer output: structured answer with citations."""
-    sentences: list[dict]  # Each: {"text": str, "citations": [{"chunk_id": str, "start": int, "end": int}]}
+
+    sentences: list[dict[str, Any]]  # Each sentence dict with "text" and "citations" list

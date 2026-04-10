@@ -69,8 +69,8 @@ class RecursiveChunker(BaseChunker):
     def chunk(self, text: str, metadata: dict | None = None) -> list[Chunk]:
         metadata = metadata or {}
         splits = self.splitter.split_text(text)
-        chunks = []
-        for i, s in enumerate(splits):
+        chunks: list[Chunk] = []
+        for s in splits:
             s_stripped = s.strip()
             if not s_stripped:
                 continue

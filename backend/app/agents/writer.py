@@ -1,4 +1,5 @@
 import json
+
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -39,7 +40,6 @@ Guidelines:
 async def writer_node(state: ResearchState) -> dict:
     question = state["question"]
     analysis = state.get("analysis", "")
-    fact_checks = state.get("fact_check_results", [])
     chunks = state.get("retrieved_chunks", [])
     logger.info("writer synthesizing", chunks=len(chunks))
 
@@ -69,7 +69,10 @@ async def writer_node(state: ResearchState) -> dict:
         response = await structured_llm.ainvoke(messages)
         draft = response
         # Convert back to JSON for storage
-        final_answer = json.dumps(draft.model_dump())
+        if isinstance(draft, VerifiedAnswerDraft):
+            final_answer = json.dumps(draft.model_dump())
+        else:
+            final_answer = json.dumps({"sentences": []})
     except Exception as e:
         logger.warning("structured output failed, falling back to freeform", error=str(e))
         # Fallback: unstructured answer

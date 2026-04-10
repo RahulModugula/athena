@@ -6,10 +6,10 @@ from sentence_transformers import CrossEncoder
 logger = structlog.get_logger()
 
 # Global NLI model cache
-_nli_model = None
+_nli_model: CrossEncoder | None = None
 
 
-def get_nli_model():
+def get_nli_model() -> CrossEncoder:
     """Load the NLI model (lazy load, cached)."""
     global _nli_model
     if _nli_model is None:
@@ -29,7 +29,8 @@ def compute_entailment_score(premise: str, hypothesis: str) -> float:
         Probability of entailment (0.0-1.0)
     """
     model = get_nli_model()
-    # CrossEncoder expects (premise, hypothesis) pairs and returns 3 scores: [entail, neutral, contradict]
+    # CrossEncoder expects (premise, hypothesis) pairs and returns 3 scores:
+    # [entail, neutral, contradict]
     scores = model.predict([[premise, hypothesis]])[0]
     # scores[0] is entailment probability
     return float(scores[0])

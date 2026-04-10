@@ -1,10 +1,10 @@
 """Orchestrate verification of citations against retrieved chunks."""
 
-import hashlib
-import structlog
 from typing import Any
 
-from app.verification.models import VerifiedAnswer, VerifiedSentence, CitationSpan
+import structlog
+
+from app.verification.models import CitationSpan, VerifiedAnswer, VerifiedSentence
 from app.verification.nli import batch_compute_entailment
 from app.verification.parser import parse_answer
 

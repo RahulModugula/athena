@@ -1,6 +1,7 @@
 """Verifier node: check answer credibility and decide if retry is needed."""
 
 import structlog
+
 from app.agents.state import ResearchState
 from app.verification import verify_answer
 
