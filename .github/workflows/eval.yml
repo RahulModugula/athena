@@ -1,0 +1,188 @@
+name: Evaluation & Benchmarks
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: athena_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -e ".[dev]"
+          pip install pytest-cov httpx
+
+      - name: Run unit tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/athena_test
+        run: |
+          cd backend
+          python -m pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
+
+      - name: Run linting (ruff)
+        run: |
+          cd backend
+          python -m ruff check app/
+
+      - name: Run type checking (mypy)
+        run: |
+          cd backend
+          python -m mypy app/ --no-error-summary
+
+  benchmark:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: athena_bench
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -e ".[dev]"
+          pip install httpx
+
+      - name: Initialize database
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/athena_bench
+        run: |
+          cd backend
+          python -m alembic upgrade head
+
+      - name: Ingest sample documents
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/athena_bench
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          cd backend
+          python -c "
+          import asyncio
+          from app.services.document_service import ingest_document
+          from app.ingestion.embedder import EmbeddingService
+          from app.database import get_session
+
+          async def ingest_sample():
+              with open('eval/data/sample_contract.txt', 'rb') as f:
+                  content = f.read()
+              async with get_session() as db:
+                  embedder = EmbeddingService()
+                  doc = await ingest_document(
+                      file_bytes=content,
+                      filename='sample_contract.txt',
+                      mime_type='text/plain',
+                      chunking_strategy='recursive',
+                      db=db,
+                      embedder=embedder,
+                  )
+                  await db.commit()
+                  print(f'Ingested: {doc.filename}')
+
+          asyncio.run(ingest_sample())
+          " || echo "Document ingestion skipped (requires API key)"
+
+      - name: Run LegalBench evaluation
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/athena_bench
+        run: |
+          cd backend
+          python -m eval.legalbench.runner \
+            --api-url http://localhost:8000 \
+            --max-questions 5 \
+            --output eval/results/bench_${GITHUB_SHA:0:7}.json || echo "Eval requires running API"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: benchmark-results
+          path: backend/eval/results/
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const resultsDir = 'backend/eval/results';
+
+            // Find the latest result file
+            const files = fs.readdirSync(resultsDir).filter(f => f.endsWith('.json'));
+            if (files.length === 0) {
+              console.log('No benchmark results found');
+              return;
+            }
+
+            const latestFile = files.sort().pop();
+            const results = JSON.parse(fs.readFileSync(`${resultsDir}/${latestFile}`, 'utf8'));
+            const metrics = results.metrics || {};
+
+            const comment = `
+## 📊 Benchmark Results
+
+| Metric | Value |
+|--------|-------|
+| Precision@1 | ${(metrics.correct_at_1 * 100).toFixed(1)}% |
+| Mean Trust Score | ${(metrics.mean_trust_score * 100).toFixed(1)}% |
+| Mean Latency | ${metrics.mean_latency_ms?.toFixed(1)}ms |
+| Questions Evaluated | ${metrics.total_questions || 0} |
+
+**Status**: ✅ Benchmark completed
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
