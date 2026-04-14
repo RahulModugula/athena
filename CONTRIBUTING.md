@@ -1,127 +1,79 @@
-# Contributing to Athena
+# Contributing to athena-verify
 
-Thanks for your interest. Contributions are welcome — bug fixes, new features, documentation improvements, and evaluation improvements all accepted.
+Thank you for your interest in contributing! This project is focused on one thing: **runtime verification of RAG answers against retrieved context**.
 
----
-
-## Development environment
-
-### Requirements
-
-- Python 3.12
-- Docker and Docker Compose (for PostgreSQL)
-- `uv` for dependency management
-
-### Setup
+## Quick Start
 
 ```bash
-git clone https://github.com/yourusername/athena.git
-cd athena/backend
-
-# Create a virtual environment and install all dependencies including dev extras
-uv venv
-source .venv/bin/activate
-uv pip install -e ".[dev]"
-
-# Copy env template and fill in your ZhipuAI API key
-cp .env.example .env
+git clone https://github.com/RahulModugula/athena.git
+cd athena
+pip install -e ".[dev,nli]"
+pytest
 ```
 
-Start a local PostgreSQL with pgvector:
+## Development Setup
 
 ```bash
-docker compose up postgres -d
-```
+# Install with all dev dependencies
+pip install -e ".[dev,nli]"
 
-Run database migrations:
+# Run tests
+pytest
 
-```bash
-alembic upgrade head
-```
-
-Start the development server with auto-reload:
-
-```bash
-uvicorn app.main:app --reload
-```
-
----
-
-## Running tests
-
-```bash
-# From backend/
-pytest tests/ -v
-```
-
-Tests require a running PostgreSQL instance. The connection URL is read from the `ATHENA_DATABASE_URL` environment variable. The default in `.env.example` points to the Docker Compose service.
-
-To run a specific test file:
-
-```bash
-pytest tests/test_retrieval.py -v
-```
-
----
-
-## Code style
-
-The project uses **Ruff** for linting and formatting and **mypy** for static type checking.
-
-```bash
-# Lint and auto-fix
-ruff check app/ tests/ --fix
-
-# Format
-ruff format app/ tests/
+# Run linter
+ruff check .
 
 # Type check
-mypy app/
+mypy athena_verify/
 ```
 
-All three checks run in CI and must pass before a pull request can be merged. Configure your editor to run Ruff on save if possible — this avoids CI surprises.
+## What We're Looking For
 
-A few conventions to follow:
+- **Benchmark results** — Run our benchmarks on new datasets and submit results
+- **New integrations** — Haystack, Semantic Kernel, Llama.cpp, etc.
+- **NLI model improvements** — Better models, faster inference, multilingual support
+- **Bug fixes** — Especially in sentence splitting and overlap computation
+- **Documentation** — Examples, tutorials, API clarifications
 
-- All new functions and methods must have type annotations.
-- Public functions must have a one-line docstring.
-- Avoid mutable default arguments.
-- Keep functions short and focused; prefer composition over long procedural blocks.
+## Pull Request Process
 
----
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/my-feature`)
+3. Make your changes
+4. Add tests for any new functionality
+5. Run `pytest` and `ruff check .` to ensure everything passes
+6. Submit a PR with a clear description
 
-## Pull request process
+## Code Style
 
-1. Fork the repository and create a branch from `main`. Use a short, descriptive name: `fix/bm25-score-normalisation`, `feat/pdf-table-extraction`, `docs/chunking-strategies`.
+- Python 3.11+ with type hints
+- `ruff` for linting (line length: 100)
+- `mypy --strict` for type checking
+- Google-style docstrings
 
-2. Make your changes with tests. For bug fixes, add a test that reproduces the bug. For new features, add tests covering the happy path and at least one error case.
+## Project Structure
 
-3. Run the full check suite locally before pushing:
+```
+athena_verify/          # The library
+├── core.py             # verify() and verify_async()
+├── models.py           # Data models
+├── nli.py              # NLI entailment scoring
+├── overlap.py          # Lexical overlap computation
+├── calibration.py      # Trust score calibration
+├── llm_judge.py        # Optional LLM-as-judge
+├── parser.py           # Sentence splitting
+└── integrations/       # Framework integrations
+tests/                  # Test suite
+benchmarks/             # Benchmark runners and results
+examples/               # Usage examples
+```
 
-   ```bash
-   ruff check app/ tests/
-   ruff format --check app/ tests/
-   mypy app/
-   pytest tests/ -v
-   ```
+## Reporting Issues
 
-4. Open a pull request against `main`. Fill in the description with:
-   - What the change does and why
-   - How to test it manually if relevant
-   - Any design decisions worth discussing
+- **Bug reports**: Include Python version, OS, and a minimal reproduction
+- **Feature requests**: Explain the use case and how it fits the verification layer scope
+- **Benchmark issues**: Include the dataset, command, and output
 
-5. A review pass will follow. Address comments and push updates to the same branch — do not open a new PR.
+## License
 
-6. Once approved and CI is green, the PR will be merged with a merge commit.
-
----
-
-## Reporting issues
-
-Open a GitHub issue with a clear title and the following information:
-
-- What you expected to happen
-- What actually happened
-- Steps to reproduce
-- Relevant log output or tracebacks
-- Python version, OS, and Docker version if applicable
+By contributing, you agree that your contributions will be licensed under the MIT License.
