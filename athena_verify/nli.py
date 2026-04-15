@@ -34,11 +34,11 @@ def get_nli_model(model_name: str = "cross-encoder/nli-deberta-v3-base") -> Any:
 
     try:
         from sentence_transformers import CrossEncoder
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "sentence-transformers is required for NLI scoring. "
             "Install with: pip install athena-verify[nli]"
-        )
+        ) from e
 
     logger.info("loading_nli_model", model=model_name)
     _nli_model = CrossEncoder(model_name)

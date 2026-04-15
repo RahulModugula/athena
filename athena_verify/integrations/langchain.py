@@ -13,7 +13,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any
 
 from athena_verify import verify
 from athena_verify.models import VerificationResult
@@ -79,7 +79,10 @@ class VerifyingLLM:
         Returns:
             The LLM answer, potentially annotated with verification info.
         """
-        answer = self.llm.predict(text, **kwargs) if hasattr(self.llm, "predict") else str(self.llm(text))
+        if hasattr(self.llm, "predict"):
+            answer = self.llm.predict(text, **kwargs)
+        else:
+            answer = str(self.llm(text))
 
         if context and len(context) > 0:
             result = verify(
@@ -95,17 +98,18 @@ class VerifyingLLM:
                 if self.on_unsupported == "reject":
                     return ""
                 elif self.on_unsupported == "flag":
-                    unsupported_texts = [s.text for s in result.unsupported]
-                    flag = f"\n\n⚠️ Verification warning: {len(result.unsupported)} unsupported claims."
-                    if unsupported_texts:
-                        flag += f"\nUnsupported sentences: {unsupported_texts}"
+                    unsupp = [s.text for s in result.unsupported]
+                    n = len(result.unsupported)
+                    flag = f"\n\n⚠️ Verification warning: {n} unsupported claims."
+                    if unsupp:
+                        flag += f"\nUnsupported sentences: {unsupp}"
                     return answer + flag
 
         return answer
 
     def predict_messages(
         self,
-        messages: List[Any],
+        messages: list[Any],
         *,
         context: list[str] | None = None,
         question: str | None = None,

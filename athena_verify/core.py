@@ -121,8 +121,13 @@ def verify(
     # --- Overall assessment ---
     overall_trust, passed = compute_overall_trust(sentence_scores, trust_threshold)
 
-    supported = [s for s in sentence_scores if s.support_status in ("SUPPORTED", "PARTIAL")]
-    unsupported = [s for s in sentence_scores if s.support_status in ("UNSUPPORTED", "CONTRADICTED")]
+    supported = [
+        s for s in sentence_scores if s.support_status in ("SUPPORTED", "PARTIAL")
+    ]
+    unsupported = [
+        s for s in sentence_scores
+        if s.support_status in ("UNSUPPORTED", "CONTRADICTED")
+    ]
 
     latency_ms = (time.time() - start_time) * 1000
 
@@ -230,8 +235,13 @@ async def verify_async(
     # --- Overall assessment ---
     overall_trust, passed = compute_overall_trust(sentence_scores, trust_threshold)
 
-    supported = [s for s in sentence_scores if s.support_status in ("SUPPORTED", "PARTIAL")]
-    unsupported = [s for s in sentence_scores if s.support_status in ("UNSUPPORTED", "CONTRADICTED")]
+    supported = [
+        s for s in sentence_scores if s.support_status in ("SUPPORTED", "PARTIAL")
+    ]
+    unsupported = [
+        s for s in sentence_scores
+        if s.support_status in ("UNSUPPORTED", "CONTRADICTED")
+    ]
 
     latency_ms = (time.time() - start_time) * 1000
 
@@ -287,7 +297,8 @@ def verified_completion(
     chunks = [Chunk.from_input(c) for c in context]
     context_text = "\n\n".join(c.content for c in chunks)
 
-    prompt = f"""Answer the following question based only on the provided context. If the context doesn't contain enough information, say so.
+    prompt = f"""Answer the following question based only on the provided context. \
+If the context doesn't contain enough information, say so.
 
 Context:
 {context_text}

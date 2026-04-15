@@ -41,16 +41,30 @@ class SentenceScore(BaseModel):
 
     text: str
     index: int
-    nli_score: float = Field(ge=0.0, le=1.0, description="NLI entailment probability")
-    lexical_overlap: float = Field(ge=0.0, le=1.0, description="Token-level F1 overlap with best-matching context")
-    llm_judge_score: float | None = Field(
-        default=None, ge=0.0, le=1.0, description="LLM-as-judge score (optional)"
+    nli_score: float = Field(
+        ge=0.0, le=1.0, description="NLI entailment probability"
     )
-    trust_score: float = Field(ge=0.0, le=1.0, description="Calibrated trust score")
-    support_status: str = Field(description="SUPPORTED | PARTIAL | UNSUPPORTED | CONTRADICTED")
-    best_matching_context: str | None = Field(default=None, description="The context chunk with highest overlap")
+    lexical_overlap: float = Field(
+        ge=0.0, le=1.0,
+        description="Token-level F1 overlap with best-matching context",
+    )
+    llm_judge_score: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="LLM-as-judge score (optional)",
+    )
+    trust_score: float = Field(
+        ge=0.0, le=1.0, description="Calibrated trust score"
+    )
+    support_status: str = Field(
+        description="SUPPORTED | PARTIAL | UNSUPPORTED | CONTRADICTED"
+    )
+    best_matching_context: str | None = Field(
+        default=None,
+        description="The context chunk with highest overlap",
+    )
     supporting_spans: list[dict[str, Any]] = Field(
-        default_factory=list, description="Spans in context that support this sentence"
+        default_factory=list,
+        description="Spans in context that support this sentence",
     )
 
 
@@ -59,18 +73,29 @@ class VerificationResult(BaseModel):
 
     question: str
     answer: str
-    trust_score: float = Field(ge=0.0, le=1.0, description="Overall calibrated trust score (0.0-1.0)")
-    sentences: list[SentenceScore] = Field(description="Per-sentence verification scores")
+    trust_score: float = Field(
+        ge=0.0, le=1.0,
+        description="Overall calibrated trust score (0.0-1.0)",
+    )
+    sentences: list[SentenceScore] = Field(
+        description="Per-sentence verification scores"
+    )
     unsupported: list[SentenceScore] = Field(
-        default_factory=list, description="Sentences that failed verification"
+        default_factory=list,
+        description="Sentences that failed verification",
     )
     supported: list[SentenceScore] = Field(
-        default_factory=list, description="Sentences that passed verification"
+        default_factory=list,
+        description="Sentences that passed verification",
     )
     suggested_revision: str | None = Field(
-        default=None, description="LLM-generated corrected answer (if enabled)"
+        default=None,
+        description="LLM-generated corrected answer (if enabled)",
     )
-    verification_passed: bool = Field(description="True if overall trust >= threshold")
+    verification_passed: bool = Field(
+        description="True if overall trust >= threshold"
+    )
     metadata: dict[str, Any] = Field(
-        default_factory=dict, description="Additional metadata (model used, latency, etc.)"
+        default_factory=dict,
+        description="Additional metadata (model used, latency, etc.)",
     )

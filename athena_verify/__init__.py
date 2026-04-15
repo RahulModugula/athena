@@ -16,7 +16,7 @@ Usage:
     print(result.unsupported)      # sentences that failed verification
 """
 
-from athena_verify.core import verify, verify_async, verified_completion
+from athena_verify.core import verified_completion, verify, verify_async
 from athena_verify.models import Chunk, SentenceScore, VerificationResult
 
 __all__ = [

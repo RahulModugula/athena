@@ -9,7 +9,7 @@ disagree.
 from __future__ import annotations
 
 import json
-from typing import Any, Protocol
+from typing import Protocol
 
 import structlog
 
@@ -50,8 +50,11 @@ class OpenAIJudge:
     def complete(self, prompt: str) -> str:
         try:
             from openai import OpenAI
-        except ImportError:
-            raise ImportError("openai is required for LLM judging. Install with: pip install athena-verify[llm]")
+        except ImportError as e:
+            raise ImportError(
+                "openai is required for LLM judging. "
+                "Install with: pip install athena-verify[llm]"
+            ) from e
 
         client = OpenAI(api_key=self.api_key) if self.api_key else OpenAI()
         response = client.chat.completions.create(
@@ -73,10 +76,11 @@ class AnthropicJudge:
     def complete(self, prompt: str) -> str:
         try:
             import anthropic
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
-                "anthropic is required for LLM judging. Install with: pip install athena-verify[llm]"
-            )
+                "anthropic is required for LLM judging. "
+                "Install with: pip install athena-verify[llm]"
+            ) from e
 
         client = anthropic.Anthropic(api_key=self.api_key) if self.api_key else anthropic.Anthropic()
         response = client.messages.create(

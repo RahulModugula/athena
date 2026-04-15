@@ -16,7 +16,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from athena_verify import verify
 from athena_verify.models import VerificationResult
@@ -58,8 +58,8 @@ class VerifyingPostprocessor:
     def postprocess_nodes(
         self,
         nodes: list[Any],
-        query: Optional[Any] = None,
-        response: Optional[Any] = None,
+        query: Any | None = None,
+        response: Any | None = None,
     ) -> list[Any]:
         """Postprocess retrieved nodes (before synthesis).
 
@@ -130,7 +130,6 @@ class VerifyingPostprocessor:
 
         # Optionally flag unsupported claims in the response text
         if self.flag_unsupported and result.unsupported:
-            unsupported_texts = [s.text for s in result.unsupported]
             warning = (
                 f"\n\n⚠️ Verification: {len(result.unsupported)} unsupported claim(s) detected. "
                 f"Trust score: {result.trust_score:.2f}"

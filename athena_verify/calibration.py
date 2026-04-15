@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from athena_verify.models import SentenceScore
 
-
 # Default weights for the ensemble
 DEFAULT_WEIGHTS = {
     "nli": 0.55,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from athena_verify import verify
 from athena_verify.models import Chunk, VerificationResult
 
