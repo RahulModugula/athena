@@ -9,7 +9,7 @@ disagree.
 from __future__ import annotations
 
 import json
-from typing import Protocol
+from typing import Any, Protocol
 
 import structlog
 
@@ -40,23 +40,29 @@ class LLMClient(Protocol):
     def complete(self, prompt: str) -> str: ...
 
 
+_DEFAULT_TIMEOUT = 60
+
+
 class OpenAIJudge:
     """LLM judge using OpenAI API."""
 
     def __init__(self, model: str = "gpt-4o-mini", api_key: str | None = None):
         self.model = model
         self.api_key = api_key
+        self._client: object | None = None
+
+    def _get_client(self) -> Any:
+        from openai import OpenAI
+
+        if self._client is None:
+            kwargs: dict[str, Any] = {"timeout": _DEFAULT_TIMEOUT}
+            if self.api_key:
+                kwargs["api_key"] = self.api_key
+            self._client = OpenAI(**kwargs)
+        return self._client
 
     def complete(self, prompt: str) -> str:
-        try:
-            from openai import OpenAI
-        except ImportError as e:
-            raise ImportError(
-                "openai is required for LLM judging. "
-                "Install with: pip install athena-verify[llm]"
-            ) from e
-
-        client = OpenAI(api_key=self.api_key) if self.api_key else OpenAI()
+        client = self._get_client()
         response = client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
@@ -72,17 +78,20 @@ class AnthropicJudge:
     def __init__(self, model: str = "claude-3-5-haiku-20241022", api_key: str | None = None):
         self.model = model
         self.api_key = api_key
+        self._client: object | None = None
+
+    def _get_client(self) -> Any:
+        import anthropic
+
+        if self._client is None:
+            kwargs: dict[str, Any] = {"timeout": _DEFAULT_TIMEOUT}
+            if self.api_key:
+                kwargs["api_key"] = self.api_key
+            self._client = anthropic.Anthropic(**kwargs)
+        return self._client
 
     def complete(self, prompt: str) -> str:
-        try:
-            import anthropic
-        except ImportError as e:
-            raise ImportError(
-                "anthropic is required for LLM judging. "
-                "Install with: pip install athena-verify[llm]"
-            ) from e
-
-        client = anthropic.Anthropic(api_key=self.api_key) if self.api_key else anthropic.Anthropic()
+        client = self._get_client()
         response = client.messages.create(
             model=self.model,
             max_tokens=200,

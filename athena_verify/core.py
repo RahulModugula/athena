@@ -1,12 +1,14 @@
 """Core verification function — the main entry point for athena-verify.
 
-Provides verify() and verified_completion() for checking whether an LLM
-answer is grounded in the provided context chunks.
+Provides verify(), verify_async(), verify_stream(), and
+verified_completion() for checking whether an LLM answer is grounded
+in the provided context chunks.
 """
 
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import structlog
@@ -17,10 +19,15 @@ from athena_verify.calibration import (
     compute_trust_score,
 )
 from athena_verify.llm_judge import LLMClient, batch_judge_sentences
-from athena_verify.models import Chunk, SentenceScore, VerificationResult
+from athena_verify.models import (
+    Chunk,
+    SentenceScore,
+    StreamingResult,
+    VerificationResult,
+)
 from athena_verify.nli import batch_compute_entailment, batch_compute_entailment_async
 from athena_verify.overlap import best_overlap_score
-from athena_verify.parser import split_sentences
+from athena_verify.parser import sentence_buffer, split_sentences
 
 logger = structlog.get_logger()
 
@@ -79,10 +86,7 @@ def verify(
 
     # --- NLI scoring ---
     # Pair each sentence with the full context for entailment check
-    nli_pairs = [
-        (" ".join(chunk_texts), sentence)
-        for sentence in sentences
-    ]
+    nli_pairs = [(" ".join(chunk_texts), sentence) for sentence in sentences]
     nli_scores = batch_compute_entailment(nli_pairs, model_name=nli_model)
 
     # --- Lexical overlap scoring ---
@@ -121,12 +125,9 @@ def verify(
     # --- Overall assessment ---
     overall_trust, passed = compute_overall_trust(sentence_scores, trust_threshold)
 
-    supported = [
-        s for s in sentence_scores if s.support_status in ("SUPPORTED", "PARTIAL")
-    ]
+    supported = [s for s in sentence_scores if s.support_status in ("SUPPORTED", "PARTIAL")]
     unsupported = [
-        s for s in sentence_scores
-        if s.support_status in ("UNSUPPORTED", "CONTRADICTED")
+        s for s in sentence_scores if s.support_status in ("UNSUPPORTED", "CONTRADICTED")
     ]
 
     latency_ms = (time.time() - start_time) * 1000
@@ -193,10 +194,7 @@ async def verify_async(
         )
 
     # --- NLI scoring (async) ---
-    nli_pairs = [
-        (" ".join(chunk_texts), sentence)
-        for sentence in sentences
-    ]
+    nli_pairs = [(" ".join(chunk_texts), sentence) for sentence in sentences]
     nli_scores = await batch_compute_entailment_async(nli_pairs, model_name=nli_model)
 
     # --- Lexical overlap scoring ---
@@ -235,12 +233,9 @@ async def verify_async(
     # --- Overall assessment ---
     overall_trust, passed = compute_overall_trust(sentence_scores, trust_threshold)
 
-    supported = [
-        s for s in sentence_scores if s.support_status in ("SUPPORTED", "PARTIAL")
-    ]
+    supported = [s for s in sentence_scores if s.support_status in ("SUPPORTED", "PARTIAL")]
     unsupported = [
-        s for s in sentence_scores
-        if s.support_status in ("UNSUPPORTED", "CONTRADICTED")
+        s for s in sentence_scores if s.support_status in ("UNSUPPORTED", "CONTRADICTED")
     ]
 
     latency_ms = (time.time() - start_time) * 1000
@@ -310,13 +305,13 @@ Answer:"""
     if provider == "openai":
         from athena_verify.llm_judge import OpenAIJudge
 
-        client = OpenAIJudge(model=model, api_key=api_key)
-        answer = client.complete(prompt)
+        judge: LLMClient = OpenAIJudge(model=model, api_key=api_key)
+        answer = judge.complete(prompt)
     elif provider == "anthropic":
         from athena_verify.llm_judge import AnthropicJudge
 
-        client = AnthropicJudge(model=model, api_key=api_key)
-        answer = client.complete(prompt)
+        judge = AnthropicJudge(model=model, api_key=api_key)
+        answer = judge.complete(prompt)
     else:
         raise ValueError(f"Unknown provider: {provider}. Use 'openai' or 'anthropic'.")
 
@@ -327,4 +322,88 @@ Answer:"""
         context=context,
         nli_model=nli_model,
         trust_threshold=trust_threshold,
+    )
+
+
+async def verify_stream(
+    question: str,
+    answer_stream: AsyncIterator[str],
+    context: list[str] | list[Chunk] | list[dict[str, Any]],
+    *,
+    nli_model: str = "cross-encoder/nli-deberta-v3-base",
+    trust_threshold: float = 0.70,
+    weights: dict[str, float] | None = None,
+) -> AsyncIterator[StreamingResult]:
+    """Verify a streaming LLM answer incrementally, sentence-by-sentence.
+
+    Buffers incoming tokens until a sentence boundary is reached, then
+    runs NLI + lexical-overlap verification on the completed sentence
+    and yields an updated :class:`StreamingResult`.
+
+    The final yield has ``is_final=True`` and contains the full set of
+    scored sentences with a calibrated overall trust score.
+
+    Args:
+        question: The original question.
+        answer_stream: Async iterator yielding LLM tokens.
+        context: Retrieved context chunks.
+        nli_model: Cross-encoder model for NLI scoring.
+        trust_threshold: Minimum trust score for verification to pass.
+        weights: Custom weights for the trust score ensemble.
+
+    Yields:
+        StreamingResult — one per completed sentence, plus a final result.
+    """
+    start_time = time.time()
+
+    chunks = [Chunk.from_input(c) for c in context]
+    chunk_texts = [c.content for c in chunks]
+    combined_context = " ".join(chunk_texts)
+
+    sentence_scores: list[SentenceScore] = []
+    idx = 0
+
+    async for sentence in sentence_buffer(answer_stream):
+        nli_pairs = [(combined_context, sentence)]
+        nli_scores = await batch_compute_entailment_async(nli_pairs, model_name=nli_model)
+        nli = nli_scores[0] if nli_scores else 0.0
+
+        overlap, best_chunk = best_overlap_score(sentence, chunk_texts)
+        trust = compute_trust_score(nli, overlap, None, weights)
+        status = classify_support(trust)
+
+        score = SentenceScore(
+            text=sentence,
+            index=idx,
+            nli_score=nli,
+            lexical_overlap=overlap,
+            trust_score=trust,
+            support_status=status,
+            best_matching_context=best_chunk,
+        )
+        sentence_scores.append(score)
+        idx += 1
+
+        overall_trust, _ = compute_overall_trust(sentence_scores, trust_threshold)
+
+        yield StreamingResult(
+            trust_score=round(overall_trust, 4),
+            sentences=list(sentence_scores),
+            is_final=False,
+        )
+
+    overall_trust, passed = compute_overall_trust(sentence_scores, trust_threshold)
+    latency_ms = (time.time() - start_time) * 1000
+
+    yield StreamingResult(
+        trust_score=round(overall_trust, 4),
+        sentences=list(sentence_scores),
+        is_final=True,
+        metadata={
+            "nli_model": nli_model,
+            "num_chunks": len(chunks),
+            "num_sentences": len(sentence_scores),
+            "latency_ms": round(latency_ms, 1),
+            "verification_passed": passed,
+        },
     )
