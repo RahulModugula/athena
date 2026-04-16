@@ -47,17 +47,12 @@ def compute_trust_score(
         # All three signals available
         total_weight = w["nli"] + w["overlap"] + w["llm_judge"]
         trust = (
-            w["nli"] * nli_score
-            + w["overlap"] * lexical_overlap
-            + w["llm_judge"] * llm_judge_score
+            w["nli"] * nli_score + w["overlap"] * lexical_overlap + w["llm_judge"] * llm_judge_score
         ) / total_weight
     else:
         # Only NLI + overlap — redistribute LLM-judge weight
         total_weight = w["nli"] + w["overlap"]
-        trust = (
-            w["nli"] * nli_score
-            + w["overlap"] * lexical_overlap
-        ) / total_weight
+        trust = (w["nli"] * nli_score + w["overlap"] * lexical_overlap) / total_weight
 
     return min(1.0, max(0.0, trust))
 

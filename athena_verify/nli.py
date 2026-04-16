@@ -13,9 +13,26 @@ import structlog
 
 logger = structlog.get_logger()
 
-# Global NLI model cache — loaded once, reused across calls
-_nli_model: Any = None
-_nli_model_name: str = ""
+NLI_MODEL_ALIASES: dict[str, str] = {
+    "default": "cross-encoder/nli-deberta-v3-base",
+    "lightweight": "cross-encoder/nli-MiniLM2-L6-H768",
+    "vectara": "vectara/hallucination_evaluation_model",
+    "deberta-base": "MoritzLaworr/NLI-deberta-base",
+}
+
+_nli_cache: dict[str, Any] = {}
+
+
+def resolve_nli_model(model_name: str) -> str:
+    """Resolve a model alias to a full HuggingFace model identifier.
+
+    Args:
+        model_name: A model name or alias (e.g. "lightweight").
+
+    Returns:
+        The resolved HuggingFace model identifier.
+    """
+    return NLI_MODEL_ALIASES.get(model_name, model_name)
 
 
 def get_nli_model(model_name: str = "cross-encoder/nli-deberta-v3-base") -> Any:
@@ -27,10 +44,10 @@ def get_nli_model(model_name: str = "cross-encoder/nli-deberta-v3-base") -> Any:
     Returns:
         CrossEncoder model instance.
     """
-    global _nli_model, _nli_model_name
+    resolved = resolve_nli_model(model_name)
 
-    if _nli_model is not None and _nli_model_name == model_name:
-        return _nli_model
+    if resolved in _nli_cache:
+        return _nli_cache[resolved]
 
     try:
         from sentence_transformers import CrossEncoder
@@ -40,10 +57,9 @@ def get_nli_model(model_name: str = "cross-encoder/nli-deberta-v3-base") -> Any:
             "Install with: pip install athena-verify[nli]"
         ) from e
 
-    logger.info("loading_nli_model", model=model_name)
-    _nli_model = CrossEncoder(model_name)
-    _nli_model_name = model_name
-    return _nli_model
+    logger.info("loading_nli_model", model=resolved, alias=model_name)
+    _nli_cache[resolved] = CrossEncoder(resolved)
+    return _nli_cache[resolved]
 
 
 def compute_entailment_score(
@@ -68,6 +84,7 @@ def compute_entailment_score(
     if hasattr(scores, "shape") and len(scores.shape) > 1:
         # Softmax to get probabilities, take entailment (index 0)
         import numpy as np
+
         probs = np.exp(scores[0]) / np.exp(scores[0]).sum()
         return float(probs[0])
     # Some models return a single score
@@ -77,12 +94,14 @@ def compute_entailment_score(
 def batch_compute_entailment(
     pairs: list[tuple[str, str]],
     model_name: str = "cross-encoder/nli-deberta-v3-base",
+    batch_size: int = 32,
 ) -> list[float]:
     """Batch compute entailment scores for multiple premise-hypothesis pairs.
 
     Args:
         pairs: List of (premise, hypothesis) tuples.
-        model_name: Cross-encoder model to use.
+        model_name: Cross-encoder model to use (or alias like "lightweight").
+        batch_size: Number of pairs to process at once.
 
     Returns:
         List of entailment probabilities.
@@ -95,15 +114,17 @@ def batch_compute_entailment(
 
     import numpy as np
 
-    results = []
-    for score_row in scores:
-        if hasattr(score_row, "__len__") and len(score_row) >= 3:
-            # [entail, neutral, contradict] logits → softmax → entailment prob
-            probs = np.exp(score_row) / np.exp(score_row).sum()
-            results.append(float(probs[0]))
-        else:
-            # Single score (some models)
-            results.append(float(score_row))
+    results: list[float] = []
+    for start in range(0, len(pairs), batch_size):
+        batch = pairs[start : start + batch_size]
+        scores = model.predict(batch)
+
+        for score_row in scores:
+            if hasattr(score_row, "__len__") and len(score_row) >= 3:
+                probs = np.exp(score_row) / np.exp(score_row).sum()
+                results.append(float(probs[0]))
+            else:
+                results.append(float(score_row))
 
     return results
 
@@ -111,6 +132,7 @@ def batch_compute_entailment(
 async def batch_compute_entailment_async(
     pairs: list[tuple[str, str]],
     model_name: str = "cross-encoder/nli-deberta-v3-base",
+    batch_size: int = 32,
 ) -> list[float]:
     """Async wrapper around batch NLI inference.
 
@@ -119,9 +141,10 @@ async def batch_compute_entailment_async(
 
     Args:
         pairs: List of (premise, hypothesis) tuples.
-        model_name: Cross-encoder model to use.
+        model_name: Cross-encoder model to use (or alias like "lightweight").
+        batch_size: Number of pairs to process at once.
 
     Returns:
         List of entailment probabilities.
     """
-    return await asyncio.to_thread(batch_compute_entailment, pairs, model_name)
+    return await asyncio.to_thread(batch_compute_entailment, pairs, model_name, batch_size)

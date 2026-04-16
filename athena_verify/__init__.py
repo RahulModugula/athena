@@ -16,12 +16,21 @@ Usage:
     print(result.unsupported)      # sentences that failed verification
 """
 
-from athena_verify.core import verified_completion, verify, verify_async, verify_stream
+from athena_verify.core import (
+    verified_completion,
+    verify,
+    verify_async,
+    verify_batch,
+    verify_batch_async,
+    verify_stream,
+)
 from athena_verify.models import Chunk, SentenceScore, StreamingResult, VerificationResult
 
 __all__ = [
     "verify",
     "verify_async",
+    "verify_batch",
+    "verify_batch_async",
     "verify_stream",
     "verified_completion",
     "VerificationResult",

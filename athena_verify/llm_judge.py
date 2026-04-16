@@ -33,6 +33,17 @@ Respond with a JSON object:
 
 Be strict: only mark as supported if the sentence can be directly inferred from the context."""
 
+REVISION_PROMPT = """You are a fact-correction assistant. The following sentence contradicts or is unsupported by the provided context. Rewrite it using ONLY information from the context. If the context does not contain relevant information to correct the sentence, respond with "INSUFFICIENT_CONTEXT".
+
+Context:
+{context}
+
+Original sentence: {sentence}
+
+Question (for context): {question}
+
+Rewrite the sentence so it is factually grounded in the context. Output only the corrected sentence, nothing else."""
+
 
 class LLMClient(Protocol):
     """Protocol for LLM clients (OpenAI, Anthropic, etc.)."""
@@ -158,3 +169,52 @@ def batch_judge_sentences(
         List of (score, reasoning) tuples.
     """
     return [judge_sentence(s, context, question, client) for s in sentences]
+
+
+def generate_revision(
+    sentence: str,
+    context: str,
+    question: str,
+    client: LLMClient,
+) -> str | None:
+    """Generate a corrected version of an unsupported sentence.
+
+    Args:
+        sentence: The unsupported sentence to correct.
+        context: The context chunks joined into a single string.
+        question: The original question.
+        client: LLM client to use.
+
+    Returns:
+        Corrected sentence string, or None if context is insufficient.
+    """
+    prompt = REVISION_PROMPT.format(context=context, sentence=sentence, question=question)
+
+    try:
+        response = client.complete(prompt).strip()
+        if response == "INSUFFICIENT_CONTEXT" or not response:
+            return None
+        return response
+    except Exception as e:
+        logger.warning("revision_generation_error", error=str(e))
+        return None
+
+
+def batch_generate_revisions(
+    sentences: list[str],
+    context: str,
+    question: str,
+    client: LLMClient,
+) -> list[str | None]:
+    """Generate revisions for multiple unsupported sentences.
+
+    Args:
+        sentences: List of unsupported sentences to correct.
+        context: The context chunks joined into a single string.
+        question: The original question.
+        client: LLM client to use.
+
+    Returns:
+        List of corrected sentence strings (or None for each).
+    """
+    return [generate_revision(s, context, question, client) for s in sentences]

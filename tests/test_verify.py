@@ -110,7 +110,9 @@ class TestVerifySupported:
         result = verify(
             question="What is the capital of France?",
             answer="The capital of France is Paris.",
-            context=["Paris is the capital city of France, located in the north-central part of the country."],
+            context=[
+                "Paris is the capital city of France, located in the north-central part of the country."
+            ],
         )
         assert result.verification_passed is True
         assert result.trust_score > 0.5
@@ -120,7 +122,9 @@ class TestVerifySupported:
         result = verify(
             question="What is the capital of France?",
             answer="The capital of France is London.",
-            context=["Paris is the capital city of France, located in the north-central part of the country."],
+            context=[
+                "Paris is the capital city of France, located in the north-central part of the country."
+            ],
         )
         # London is contradicted by the context
         assert len(result.unsupported) > 0 or result.trust_score < 0.8

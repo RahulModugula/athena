@@ -22,7 +22,9 @@ class TestComputeTrustScore:
     def test_with_llm_judge(self):
         """LLM judge score should be incorporated."""
         trust_no_judge = compute_trust_score(nli_score=0.5, lexical_overlap=0.5)
-        trust_with_judge = compute_trust_score(nli_score=0.5, lexical_overlap=0.5, llm_judge_score=0.9)
+        trust_with_judge = compute_trust_score(
+            nli_score=0.5, lexical_overlap=0.5, llm_judge_score=0.9
+        )
         # Higher judge score should increase trust
         assert trust_with_judge > trust_no_judge
 
