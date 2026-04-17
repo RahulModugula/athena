@@ -325,15 +325,18 @@ def verify_batch(
     """
     single_question = isinstance(questions, str)
     if single_question:
-        questions_list: list[str] = [questions]
-        answers_list: list[str] = [answers]
+        questions_list: list[str] = [questions]  # type: ignore[list-item]
+        answers_list: list[str] = [answers]  # type: ignore[list-item]
         contexts_list: list[Any] = [contexts]
     else:
-        questions_list = questions
-        answers_list = answers
-        if isinstance(contexts, list) and len(contexts_list := contexts) > 0:
-            if isinstance(contexts_list[0], (str, dict, Chunk)):
+        questions_list = list(questions)
+        answers_list = list(answers)
+        if isinstance(contexts, list) and len(contexts) > 0:
+            first = contexts[0]
+            if isinstance(first, (str, dict, Chunk)):
                 contexts_list = [contexts] * len(questions_list)
+            else:
+                contexts_list = contexts
         else:
             contexts_list = [contexts] * len(questions_list)
 
@@ -486,12 +489,12 @@ async def verify_batch_async(
     """
     single_question = isinstance(questions, str)
     if single_question:
-        questions_list: list[str] = [questions]
-        answers_list: list[str] = [answers]
+        questions_list: list[str] = [questions]  # type: ignore[list-item]
+        answers_list: list[str] = [answers]  # type: ignore[list-item]
         contexts_list: list[Any] = [contexts]
     else:
-        questions_list = questions
-        answers_list = answers
+        questions_list = list(questions)
+        answers_list = list(answers)
         if isinstance(contexts, list) and len(contexts) > 0:
             first = contexts[0]
             if isinstance(first, (str, dict, Chunk)):

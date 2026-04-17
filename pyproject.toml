@@ -82,10 +82,9 @@ warn_unused_configs = true
 [[tool.mypy.overrides]]
 module = [
     "sentence_transformers.*",
-    "torch.*",
-    "numpy.*",
     "openai.*",
     "anthropic.*",
+    "nltk.*",
 ]
 ignore_missing_imports = true
 

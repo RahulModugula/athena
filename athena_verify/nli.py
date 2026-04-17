@@ -7,6 +7,7 @@ a premise (context) and a hypothesis (claim/sentence).
 from __future__ import annotations
 
 import asyncio
+import math
 from typing import Any
 
 import structlog
@@ -62,6 +63,15 @@ def get_nli_model(model_name: str = "cross-encoder/nli-deberta-v3-base") -> Any:
     return _nli_cache[resolved]
 
 
+def _softmax_entailment(logits: Any) -> float:
+    """Convert 3-class NLI logits to entailment probability using softmax."""
+    row = list(logits)
+    max_val = max(row)
+    exp_vals = [math.exp(v - max_val) for v in row]
+    total = sum(exp_vals)
+    return exp_vals[0] / total
+
+
 def compute_entailment_score(
     premise: str,
     hypothesis: str,
@@ -79,15 +89,8 @@ def compute_entailment_score(
     """
     model = get_nli_model(model_name)
     scores = model.predict([[premise, hypothesis]])
-    # CrossEncoder NLI models return [entail, neutral, contradict] logits
-    # scores[0] is the array of logits for the first (only) pair
-    if hasattr(scores, "shape") and len(scores.shape) > 1:
-        # Softmax to get probabilities, take entailment (index 0)
-        import numpy as np
-
-        probs = np.exp(scores[0]) / np.exp(scores[0]).sum()
-        return float(probs[0])
-    # Some models return a single score
+    if hasattr(scores[0], "__len__") and len(scores[0]) >= 3:
+        return _softmax_entailment(scores[0])
     return float(scores[0]) if not hasattr(scores[0], "__len__") else float(scores[0][0])
 
 
@@ -110,19 +113,15 @@ def batch_compute_entailment(
         return []
 
     model = get_nli_model(model_name)
-    scores = model.predict(pairs)
-
-    import numpy as np
-
     results: list[float] = []
+
     for start in range(0, len(pairs), batch_size):
         batch = pairs[start : start + batch_size]
         scores = model.predict(batch)
 
         for score_row in scores:
             if hasattr(score_row, "__len__") and len(score_row) >= 3:
-                probs = np.exp(score_row) / np.exp(score_row).sum()
-                results.append(float(probs[0]))
+                results.append(_softmax_entailment(score_row))
             else:
                 results.append(float(score_row))
 

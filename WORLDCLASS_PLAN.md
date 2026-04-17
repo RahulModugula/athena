@@ -1,5 +1,10 @@
 # Athena: World-Class Roadmap
 
+> **SUPERSEDED** — This document has been replaced by `STRATEGY.md` (2026-04-16).
+> The project has narrowed from a full-stack RAG system to a focused **runtime verification layer** (`athena-verify`).
+> This file is kept for historical reference only. All active work follows the new strategy.
+> The code preserved on the `legacy/full-stack` branch corresponds to the plan described below.
+
 ## Executive Summary
 
 Athena 2.0 (Verifiable RAG with sentence-level hallucination detection) is currently **very impressive** — benchmarked, reproducible, shipped. To become **world-class** and unlock top-0.1% hiring, we need to:

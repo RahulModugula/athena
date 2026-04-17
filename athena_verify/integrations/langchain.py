@@ -103,9 +103,9 @@ class VerifyingLLM:
                     flag = f"\n\n⚠️ Verification warning: {n} unsupported claims."
                     if unsupp:
                         flag += f"\nUnsupported sentences: {unsupp}"
-                    return answer + flag
+                    return answer + flag  # type: ignore[no-any-return]
 
-        return answer
+        return answer  # type: ignore[no-any-return]
 
     def predict_messages(
         self,

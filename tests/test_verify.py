@@ -2,8 +2,21 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
+import pytest
+
 from athena_verify import verify
 from athena_verify.models import Chunk, VerificationResult
+
+
+@pytest.fixture(autouse=True)
+def _mock_nli():
+    with (
+        patch("athena_verify.core.batch_compute_entailment", return_value=[0.85]),
+        patch("athena_verify.core.batch_compute_entailment_async", return_value=[0.85]),
+    ):
+        yield
 
 
 class TestVerifyBasic:
