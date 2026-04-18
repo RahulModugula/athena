@@ -124,6 +124,17 @@ class VerificationResult(BaseModel):
         default_factory=list,
         description="Sentences that passed verification",
     )
+
+    @property
+    def unsupported_texts(self) -> list[str]:
+        """Unsupported sentence texts (convenience accessor)."""
+        return [s.text for s in self.unsupported]
+
+    @property
+    def supported_texts(self) -> list[str]:
+        """Supported sentence texts (convenience accessor)."""
+        return [s.text for s in self.supported]
+
     suggested_revision: str | None = Field(
         default=None,
         description="LLM-generated corrected answer (if enabled)",

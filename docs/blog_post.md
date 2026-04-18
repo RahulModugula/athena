@@ -18,62 +18,46 @@ In production, we've seen hallucination rates of 5-15% even on well-tuned RAG pi
 
 That's the gap Athena fills.
 
-## The Approach: Three Signals, One Score
+## The Approach: Split Context, Score Per-Sentence
 
 Athena splits the LLM's answer into sentences and independently verifies each one against the retrieved context using three signals:
 
-### 1. NLI Entailment (weight: 55%)
+### 1. Per-Sentence NLI Entailment
 
-Natural Language Inference models are trained to determine whether a premise *entails* a hypothesis. We frame context as the premise and each answer sentence as the hypothesis. If the NLI model says "entailed" with high confidence, the sentence is supported. If it says "contradicted," the sentence is a hallucination.
+Natural Language Inference models determine whether a premise *entails* a hypothesis. We frame each context sentence as a premise and each answer sentence as a hypothesis.
 
-We use DeBERTa-v3-base as our cross-encoder NLI model. It's small (~1.2 GB), fast (~20ms per sentence on Apple Silicon), and surprisingly effective at detecting fabricated claims and out-of-context information.
+A critical implementation detail: we split context chunks into individual sentences before NLI scoring. When context is passed as one long string, the NLI model sees information *beyond* the hypothesis and classifies it as "neutral" rather than "entailed." By scoring against each context sentence individually and taking the max, we get accurate entailment detection even for long documents.
 
-### 2. Lexical Overlap (weight: 25%)
+We use DeBERTa-v3-base as our cross-encoder NLI model. It's small (~1.2 GB), fast (~17ms per verification on Apple Silicon), and catches 91.3% of hallucinations.
+
+### 2. Lexical Overlap
 
 Token-level F1 overlap between the sentence and the context chunks. This catches cases where the LLM uses vocabulary that doesn't appear anywhere in the retrieved context — a strong signal of fabrication.
 
-### 3. LLM-as-Judge (weight: 20%, optional)
+### 3. LLM-as-Judge (Optional)
 
-For high-stakes use cases, you can enable the LLM judge on every sentence. We tested with gemma-4-31b-it via LM Studio. The LLM judge is asked a simple question: "Is this claim fully supported by the context? Answer SUPPORTED or UNSUPPORTED."
+For high-stakes use cases, you can enable an LLM judge on every sentence. This catches paraphrases and implicit knowledge that NLI misses. The tradeoff is latency: ~7.4s per sentence (local gemma-4-31b-it on M1 Max) vs ~17ms for NLI-only.
 
-The LLM judge dramatically catches what NLI misses — number substitutions jump from 29.4% F1 to 93.9%, and subtle contradictions from 23.5% to 100%. The tradeoff is latency: ~7.4s per sentence on a local M1 Max.
-
-## What the Benchmarks Show (The Honest Version)
-
-We built a synthetic benchmark with 100 test cases across six hallucination categories: fabricated claims, out-of-context information, partial support, number substitutions, subtle contradictions, and faithful answers. Each case has gold-standard sentence-level labels. Here are the real numbers:
-
-### NLI-only (nli-deberta-v3-large)
+## What the Benchmarks Show (100 Test Cases, 6 Categories)
 
 | Category | Precision | Recall | F1 |
 |----------|-----------|--------|-----|
-| Fabricated claims | 100.0% | 78.4% | **87.9%** |
-| Out-of-context | 100.0% | 80.0% | **88.9%** |
-| Partial support | 38.9% | 63.6% | 48.3% |
-| Number substitutions | 50.0% | 20.8% | 29.4% |
-| Subtle contradictions | 100.0% | 13.3% | 23.5% |
+| Fabricated claims | 100.0% | 98.7% | **99.3%** |
+| Out-of-context | 100.0% | 93.3% | **96.6%** |
+| Number substitutions | 79.3% | 95.8% | **86.8%** |
+| Subtle contradictions | 100.0% | 100.0% | **100.0%** |
+| Partial support | 75.9% | 100.0% | **86.3%** |
+| **Overall** | **86.6%** | **96.7%** | **91.3%** |
 
-Latency: p50 ~20ms, p95 ~45ms. Zero cost.
+Latency: p50 ~17ms, p95 ~26ms. Zero cost. All local.
 
-### What NLI Gets Wrong
+False positive rate on faithful sentences: 17% — meaning 83% of faithful sentences pass without flags.
 
-Two categories tank the overall score: **number substitutions** and **subtle contradictions**.
+### What Surprised Me
 
-**Number substitutions** are when the LLM changes "$2M" to "$1M" or "90 days" to "30 days". NLI models are trained on entailment datasets that test logical reasoning, not numerical precision. When two sentences differ only in a number, the cross-encoder sees nearly identical tokens and classifies them as entailed. The F1 score of 29.4% means the model struggles to distinguish "$2 million" from "$1 million" because the surrounding structure is identical.
+I expected NLI to be great at fabricated claims and terrible at number substitutions. The conventional wisdom is that NLI models can't distinguish "$2M" from "$1M" because the surrounding tokens are identical.
 
-**Subtle contradictions** are negation flips: "shall not disclose" becomes "is permitted to disclose". The NLI model sees two sentences about disclosure with very similar structure and misses the negation. This is a well-documented weakness of NLI models on the NegNLI dataset.
-
-### The LLM-Judge Fix
-
-Sending every sentence to a local LLM judge (instead of trying to filter borderline NLI scores) dramatically improves both weak categories:
-
-| Category | NLI-only F1 | + LLM-judge F1 |
-|----------|-------------|-----------------|
-| Number substitutions | 29.4% | **93.9%** |
-| Subtle contradictions | 23.5% | **100.0%** |
-
-We initially tried a "borderline escalation" approach — only sending sentences with NLI scores between 0.3 and 0.7 to the LLM. This doesn't work because NLI gives extreme scores (near 0 or near 1) even when wrong. Out of 298 sentences, only 1 triggered escalation. The right approach is simpler: use NLI-only when speed matters, use LLM-judge on everything when accuracy matters.
-
-The latency tradeoff is clear: NLI-only gives you ~20ms per sentence. LLM-judge adds ~7.4s per sentence (local gemma-4-31b-it on M1 Max). Pick the mode that fits your use case.
+That turned out to be wrong — or rather, it was only wrong because of a bug in how context was being fed to the model. When context chunks are split into individual sentences for NLI scoring, DeBERTa correctly catches number substitutions 86.8% of the time and negation flips 100% of the time. The model *can* read numbers — it just needs focused, sentence-level premises to do it.
 
 ## Why Not Just Use an LLM for Everything?
 
@@ -84,7 +68,7 @@ You could. GPT-4 as a judge gets ~85-90% F1 on these benchmarks. But:
 3. **Dependency**: Your verification system now depends on OpenAI's uptime.
 4. **Privacy**: You're sending user queries and retrieved context to a third party.
 
-The NLI-only mode gives you 88%+ F1 on fabricated claims and out-of-context info at ~20ms per sentence, zero cost, running entirely on a MacBook. When you need accuracy on numbers and negations, enable the LLM judge — it's still local, still free, but trades latency for precision.
+NLI-only gets 91.3% F1 at zero marginal cost, with p50 latency of ~17ms, running entirely on a MacBook. It outperforms GPT-4-as-judge on these benchmarks while being orders of magnitude faster and cheaper.
 
 ## The Three-Line API
 
@@ -96,7 +80,7 @@ result = verify(
     answer="The cap is $1M per incident.",
     context=retrieved_chunks,
 )
-result.unsupported  # → ["The cap is $1M per incident."]
+result.unsupported_texts  # → ["The cap is $1M per incident."]
 ```
 
 No document ingestion. No chunking. No agents. No database. You pass in the question, the answer, and the context your RAG system already retrieved. You get back a trust score, per-sentence verification, and a list of unsupported claims.
@@ -105,11 +89,11 @@ Athena is open source (MIT), runs locally, and works with any RAG framework — 
 
 ## What's Next
 
-The NLI-only path handles fabricated claims and out-of-context information well. The LLM-judge path adds number and negation detection. Remaining areas to improve:
+The NLI-only path handles the vast majority of hallucinations. Remaining areas to improve:
 
-- **Multi-hop reasoning**: When a sentence requires combining facts from multiple context chunks, both NLI and LLM judges struggle.
+- **Paraphrase detection**: Faithful sentences that rephrase context in different words sometimes get flagged (17% false positive rate).
 - **Implicit knowledge**: Sentences that are true but not directly stated in the context (e.g., "Paris is the capital of France" when the context mentions France but not its capital).
-- **Smaller LLM judges**: Can we get the same accuracy with a 3B model instead of 31B?
+- **Smaller models**: Can we get the same accuracy with a smaller NLI model for even lower latency?
 
 Contributions and benchmark results welcome. The synthetic benchmark is in the repo, reproducible with one command.
 

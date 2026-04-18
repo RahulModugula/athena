@@ -87,9 +87,29 @@ def verify(
         )
 
     # --- NLI scoring ---
-    # Pair each sentence with the full context for entailment check
-    nli_pairs = [(" ".join(chunk_texts), sentence) for sentence in sentences]
-    nli_scores = batch_compute_entailment(nli_pairs, model_name=nli_model)
+    # NLI models work best with short, focused premises. When a context chunk
+    # contains multiple sentences of info, the model classifies entailed
+    # hypotheses as "neutral" because the premise has information BEYOND the
+    # hypothesis. Fix: split chunks into individual sentences for NLI scoring.
+    context_units: list[str] = []
+    for chunk in chunk_texts:
+        sub = split_sentences(chunk)
+        context_units.extend(sub if sub else [chunk])
+
+    nli_pairs = [(unit, sentence) for sentence in sentences for unit in context_units]
+    nli_scores_flat = batch_compute_entailment(nli_pairs, model_name=nli_model)
+    nli_scores: list[float] = []
+    nli_best_chunks: list[str | None] = []
+    for i in range(len(sentences)):
+        start = i * len(context_units)
+        unit_scores = nli_scores_flat[start : start + len(context_units)]
+        if unit_scores:
+            best_idx = unit_scores.index(max(unit_scores))
+            nli_scores.append(unit_scores[best_idx])
+            nli_best_chunks.append(context_units[best_idx])
+        else:
+            nli_scores.append(0.0)
+            nli_best_chunks.append(None)
 
     # --- Lexical overlap scoring ---
     overlap_results = [best_overlap_score(s, chunk_texts) for s in sentences]

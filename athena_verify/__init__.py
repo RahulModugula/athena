@@ -12,8 +12,8 @@ Usage:
         context=retrieved_chunks,
     )
 
-    print(result.trust_score)      # 0.0 - 1.0
-    print(result.unsupported)      # sentences that failed verification
+    print(result.trust_score)          # 0.0 - 1.0
+    print(result.unsupported_texts)    # sentences that failed verification
 """
 
 from athena_verify.core import (

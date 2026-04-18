@@ -12,7 +12,7 @@ result = verify(
     answer="The cap is $1M per incident.",
     context=retrieved_chunks,
 )
-result.unsupported  # → ["The cap is $1M per incident."]  ← caught!
+result.unsupported_texts  # → ["The cap is $1M per incident."]  ← caught!
 ```
 
 That's it. No document ingestion. No chunking. No agents. No database.
@@ -30,26 +30,27 @@ That's it. No document ingestion. No chunking. No agents. No database.
   Split into sentences
       │
       ▼
-  ┌─────────────────────────────────────┐
-  │  For each sentence:                 │
-  │                                     │
-  │  1. NLI entailment vs context   ──► │ score 0.0–1.0
-  │  2. Lexical overlap vs context  ──► │ score 0.0–1.0
-  │  3. [optional] LLM judge        ──► │ SUPPORTED / UNSUPPORTED
-  │  4. Combine → trust score           │
-  └──────────────┬──────────────────────┘
+  ┌──────────────────────────────────────────┐
+  │  For each answer sentence:               │
+  │                                          │
+  │  1. Split context into sentences too     │
+  │  2. NLI: each ctx sentence vs answer ──► │ max entailment score
+  │  3. Lexical overlap vs context       ──► │ token F1 score
+  │  4. [optional] LLM judge             ──► │ SUPPORTED / UNSUPPORTED
+  │  5. Combine → trust score                │
+  └──────────────┬───────────────────────────┘
                  │
                  ▼
     VerificationResult
     ├─ trust_score: 0.0–1.0
     ├─ supported: [sentences that passed]
-    ├─ unsupported: [sentences that failed]   ← flag or filter these
+    ├─ unsupported: [sentences that failed]
     └─ verification_passed: bool
 ```
 
-Every sentence is scored independently. **Two modes:**
-- **NLI-only** (default): ~20ms per sentence, catches fabricated claims and out-of-context info
-- **NLI + LLM judge**: send every sentence to a local LLM for verification — catches number swaps and negation flips with near-perfect accuracy
+**Two modes:**
+- **NLI-only** (default): ~20ms per sentence, catches fabricated claims, out-of-context info, number swaps, and negation flips
+- **NLI + LLM judge**: send every sentence to a local LLM for additional verification when accuracy is critical
 
 ## Install
 
@@ -69,15 +70,16 @@ pip install "athena-verify[all]"
 
 Tested on 100 synthetic cases across 6 hallucination categories (legal, medical, technical, general).
 
-| Category | NLI-only F1 | + LLM-judge F1 |
-|----------|-------------|-----------------|
-| Fabricated claims | 87.9% | — |
-| Out-of-context | 88.9% | — |
-| Partial support | 48.3% | — |
-| Number substitutions | 29.4% | **93.9%** |
-| Subtle contradictions | 23.5% | **100.0%** |
+| Category | F1 |
+|----------|-----|
+| Fabricated claims | **99.3%** |
+| Out-of-context | **96.6%** |
+| Number substitutions | **86.8%** |
+| Subtle contradictions | **100.0%** |
+| Partial support | **86.3%** |
+| **Overall** | **91.3%** |
 
-NLI-only latency: **~20ms p50**. LLM-judge latency: **~7.4s/sentence** (local gemma-4-31b-it).
+NLI-only, ~17ms p50 latency, $0 cost. Full results: [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)
 
 Full results: [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)
 

@@ -64,7 +64,7 @@ class MockCrossEncoder:
         self.entailment_score = entailment_score
 
     def predict(self, pairs):
-        return [_MockArray([self.entailment_score, 0.05, 0.05]) for _ in pairs]
+        return [_MockArray([0.05, self.entailment_score, 0.05]) for _ in pairs]
 
 
 @pytest.fixture

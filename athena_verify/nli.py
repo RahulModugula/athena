@@ -64,12 +64,16 @@ def get_nli_model(model_name: str = "cross-encoder/nli-deberta-v3-base") -> Any:
 
 
 def _softmax_entailment(logits: Any) -> float:
-    """Convert 3-class NLI logits to entailment probability using softmax."""
+    """Convert 3-class NLI logits to entailment probability using softmax.
+
+    Standard NLI label ordering: 0=contradiction, 1=entailment, 2=neutral.
+    We return the probability of class 1 (entailment).
+    """
     row = list(logits)
     max_val = max(row)
     exp_vals = [math.exp(v - max_val) for v in row]
     total = sum(exp_vals)
-    return exp_vals[0] / total
+    return exp_vals[1] / total
 
 
 def compute_entailment_score(
