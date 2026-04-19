@@ -260,3 +260,243 @@ In priority order; pick 2 based on time:
 17. Legal citation-mode (Bluebook + quote-in-opinion) — 3–5 days
 18. HuggingFace Space demo — half day
 19. Ollama-native first-class client — 1h
+
+
+
+
+
+
+
+---                                                                                                                                
+  Session 1 — B7 + Improvement #2: populate supporting_spans (the new headline)                                                   
+                                                                                                                                     
+  Populate the `supporting_spans` field on `SentenceScore`. Right now it's                                                           
+  declared in athena_verify/models.py:63 but never set in athena_verify/core.py,                                                     
+  so the advertised "per-claim source spans" feature is missing.                                                                     
+                                                                                                                                     
+  For each sentence, record the chunk(s) that supported it: chunk_idx,                                                               
+  character offsets (start, end) into the original chunk text, and the                                                               
+  supporting substring. Use the per-unit NLI scores already computed in                                                              
+  core.py around line 91 — pick units above an entailment threshold (start                                                           
+  with 0.5) and map each unit back to its parent chunk's char offsets.                                                               
+                                                                                                                                     
+  Update models.py to type the field as a list[SupportingSpan] dataclass                                                             
+  instead of list[dict] so it shows up properly in IDE/JSON output.                                                                  
+                                                                                                                                     
+  Add a test in tests/ that calls verify() on a 2-chunk context and asserts                                                          
+  each supported sentence has at least one span with valid offsets that                                                              
+  slice back to the substring.                                                                                                       
+      
+  ---                                                                                                                                
+  Session 2 — Improvement #3: latency_budget_ms knob
+                                                                                                                                     
+  Add a `latency_budget_ms: int | None = None` parameter to verify() and
+  verify_async() in athena_verify/core.py.                                                                                           
+      
+  Behavior:                                                                                                                          
+    - None (default): current behavior — escalate borderline to LLM judge.
+    - <= 100: skip LLM judge entirely, return NLI+lexical only.                                                                      
+    - >100: track elapsed time; only escalate borderline sentences if                                                                
+      remaining budget covers an LLM call (use a rolling avg from                                                                    
+      llm_judge_avg_ms in metadata, or a 2000ms conservative default).                                                               
+                                                                                                                                     
+  Record per-sentence elapsed_ms and a `budget_exceeded: bool` in                                                                    
+  VerificationResult.metadata. Add tests that assert latency_budget_ms=50                                                            
+  never invokes the LLM client (mock and assert call_count == 0).                                                                    
+                                                                                                                                     
+  ---                                                                                                                                
+  Session 3 — B5: real benchmarks + honest README                                                                                    
+      
+  Run benchmarks/run_ragtruth.py and benchmarks/run_halueval.py end-to-end
+  on the actual datasets (not synthetic). Commit the JSON outputs to                                                                 
+  benchmarks/results/. Add benchmarks/run_faithbench.py following the same                                                           
+  pattern. Run it and commit results.                                                                                                
+                                                                                                                                     
+  Then rewrite the benchmark table in README.md with real numbers vs                                                                 
+  LettuceDetect 79.2% F1, HHEM-2.1-Open, Ragas faithfulness, GPT-4 judge.                                                            
+  Include at least one row where athena loses — the plan explicitly                                                                  
+  requires this for credibility.                                                                                                     
+                                                                                                                                     
+  If a dataset requires download/auth, document the steps in                                                                         
+  benchmarks/RESULTS.md, but still run what you can locally.                                                                         
+                                                                                                                                     
+  --- 
+  Session 4 — B3 + B4: sentence splitting + runnable examples                                                                        
+                                                                                                                                     
+  Two fixes:
+                                                                                                                                     
+  1. In athena_verify/parser.py, make split_sentences() use NLTK Punkt by                                                            
+     default (it currently uses a regex that breaks on "Dr. Smith" /
+     "U.S."). Keep the regex as a fallback when NLTK isn't installed.                                                                
+     Add nltk to pyproject.toml dependencies (or as an optional extra                                                                
+     with auto-fallback). Add tests for "Dr. Smith said hello. The U.S.                                                              
+     policy is X." that assert 2 sentences, not 4.                                                                                   
+                                                                                                                                     
+  2. Rewrite examples/langchain_example.py and examples/llamaindex_example.py                                                        
+     so `python examples/langchain_example.py` actually runs end-to-end                                                              
+     with a tiny in-memory retriever and a mocked or real LLM (use                                                                   
+     FakeListLLM from langchain_core for langchain; MockLLM for                                                                      
+     llamaindex). Add examples/requirements.txt.                                                                                     
+                                                                                                                                     
+  ---                                                                                                                                
+  Session 5 — B6: PyPI + CLI + release
+                                                                                                                                     
+  Three things:
+                                                                                                                                     
+  1. Add an `athena-verify` CLI entry point in pyproject.toml:                                                                       
+       athena-verify verify --answer "..." --context file.txt [--json]
+     Implement in athena_verify/cli.py using argparse. Output a colored                                                              
+     sentence-by-sentence trust score table by default; --json for                                                                   
+     machine-readable.                                                                                                               
+                                                                                                                                     
+  2. Make sure .github/workflows/ci.yml runs tests on push and that                                                                  
+     there's a release workflow that publishes to PyPI on git tag v*.
+     Use trusted publishing (OIDC), not API tokens. Don't add tokens.                                                                
+                                                                                                                                     
+  3. Bump version to 0.1.0 in pyproject.toml. DO NOT tag or publish — I'll                                                           
+     do that manually. Just leave it ready.                                                                                          
+                                                                                                                                     
+  --- 
+  Session 6 — Improvement #4: VerifyingLLM self-healing loop                                                                         
+      
+  Extend athena_verify/integrations/langchain.py VerifyingLLM with a
+  retry/re-retrieve loop:                                                                                                            
+                                                                                                                                     
+    VerifyingLLM(llm, retriever=retriever, max_retries=2,                                                                            
+                 on_unsupported="re-retrieve")                                                                                       
+                                                                                                                                     
+  When verification fails and on_unsupported="re-retrieve":
+    - Take each unsupported sentence's text as a new query                                                                           
+    - Re-retrieve via the passed retriever                                                                                           
+    - Append the new chunks to context, regenerate the answer                                                                        
+    - Re-verify, up to max_retries                                                                                                   
+                                                                                                                                     
+  Reference LangChain issue #33191 in the docstring and in                                                                           
+  docs/architecture.md. Add tests with a mock retriever that returns
+  better chunks on the second call and assert the loop terminates with                                                               
+  a passing verification.                                                                                                            
+                                                                                                                                     
+  ---                                                                                                                                
+  Session 7 — polish bundle                                                                                                          
+      
+  Five smaller fixes, one PR:
+                                                                                                                                     
+  1. athena_verify/llm_judge.py:136 — add tenacity-style retry with                                                                  
+     exponential backoff (3 attempts, 1s/2s/4s) on httpx errors and                                                                  
+     timeouts. Wrap with a circuit breaker that opens after 5                                                                        
+     consecutive failures for 30s.                                                                                                   
+                                                                                                                                     
+  2. athena_verify/core.py verify_batch_async — wrap each item in                                                                    
+     try/except so one failure doesn't fail the batch; return per-item
+     error in that item's metadata.                                                                                                  
+                                                                                                                                     
+  3. athena_verify/__init__.py — export LLMClient at the top level. Make                                                             
+     `from athena_verify.integrations import langchain, llamaindex` work                                                             
+     (currently athena_verify/integrations/__init__.py is empty).                                                                    
+                                                                                                                                     
+  4. Wire the existing models.py to_otel_span() / to_langfuse_trace()                                                                
+     methods — call them from verify() when env vars                                                                                 
+     ATHENA_OTEL_ENABLED=1 / ATHENA_LANGFUSE_ENABLED=1 are set.                                                                      
+                                                                                                                                     
+  5. Cache the NLI model load in nli.py with functools.lru_cache keyed on                                                            
+     model_name so repeated verify() calls don't re-load the model.                                                                  
+                                                                                                                                     
+  --- 
+  Session 8 — docs                                                                                                                   
+      
+  Add three short docs to docs/:
+    - security.md: what data leaves the machine when LLM judge is on                                                                 
+      (Anthropic / OpenAI / local), how to stay fully offline.                                                                       
+    - tuning.md: how to pick trust_threshold for different domains                                                                   
+      (legal=0.85, support=0.65, etc) with reasoning.                                                                                
+    - models.md: NLI model trade-offs (deberta-v3-large vs base vs                                                                   
+      lightweight), latency vs F1 table from the benchmarks.                                                                         
+                                                                                                                                     
+  Link all three from README. Each doc <300 words.                                                                                   
+                                                                                                                                     
+  ---                                                                                                                                
+  Session 9 — stretch (pick ONE before launch)
+                                                                                                                                     
+  Plan recommends verify_step():
+                                                                                                                                     
+  Add a verify_step() primitive in athena_verify/core.py:
+                                                                                                                                     
+    result = verify_step(claim: str, evidence: str | list[str],                                                                      
+                         threshold: float = 0.7) -> StepResult                                                                       
+    # StepResult: passed: bool, trust_score: float, action: "continue"|"halt"                                                        
+                                                                                                                                     
+  Build a LangGraph node wrapper in
+  athena_verify/integrations/langgraph.py that fits as a graph node                                                                  
+  returning either the original state or a halt signal. Add a CrewAI                                                                 
+  tool wrapper in athena_verify/integrations/crewai.py.                                                                              
+                                                                                                                                     
+  Add examples/agent_circuit_breaker.py showing a 3-step LangGraph agent                                                             
+  where verify_step halts on a fabricated intermediate claim.                                                                        
+                                                                                                                                     
+  --- 
+  Don't bother prompting — do these manually                                                                                         
+                                                                                                                                     
+  - Terminal GIF (record yourself, don't ask Claude)
+  - HuggingFace Space (one-off web setup)                                                                                            
+  - Pinning repo / bio updates                                                                                                       
+  - Picking the launch Tuesday                                                                                                       
+                                                                                                                                     
+  Suggested order if you want to ship in one week: 1 → 2 → 3 → 5 → 4 → 6 → 7. Sessions 8 and 9 are nice-to-have but not blocking.   
+
+
+  All 7 blockers fixed:                  
+  - B1 (NLI softmax): fixed — now uses   
+  exp_vals[1] (entailment class 1)       
+  correctly                             
+  - B2 (per-chunk NLI): fixed — loops per
+   chunk in core.py:146                  
+  - B3 (NLTK parser): fixed — NLTK punkt 
+  as default                             
+  - B4 (examples): langchain_example.py, 
+  llamaindex_example.py, requirements.txt
+   all present                           
+  - B6 (CLI/GH Actions/v0.1.0): cli.py,  
+  ci.yml/release.yml, version set — not  
+  published per plan                     
+  - B7 (supporting_spans): fully         
+  populated and typed                    
+                                         
+  Sessions 1, 2, 4, 5, 6, 7, 8, 9 all 
+  shipped (verify_step,                  
+  latency_budget_ms, VerifyingLLM,
+  polish, docs, etc.)                    
+      
+  ---
+  Three things still incomplete before 
+  you push the button:                   
+                      
+  1. B5 (benchmarks) — half done.        
+  faithbench_50.json exists but ragtruth 
+  and halueval have no real-data results.
+   The README comparison table has no    
+  FaithBench score vs LettuceDetect and
+  no row where athena loses — which the
+  plan explicitly requires for
+  credibility.
+  2. tests/test_supporting_spans.py is 
+  untracked — it was written but never   
+  committed.
+  3. 9 commits not pushed to origin — the
+   code is locally ahead, remote is      
+  stale. Push before any launch.
+                                         
+  Manual items still on you (per plan's  
+  "don't ask Claude"):
+  - Terminal GIF                         
+  - HuggingFace Space
+  - Pinning repo / bio updates
+  - git tag v0.1.0 + pip publish
+  - Pick your launch Tuesday             
+                                         
+  The one real blocker is B5 — the       
+  RAGTruth/HaluEval scripts exist but the
+   datasets need download/auth. Run what
+  you can, document the rest in          
+  benchmarks/RESULTS.md, and update the
+  README comparison table with honest
+  numbers before launching.
