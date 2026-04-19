@@ -41,6 +41,24 @@ Signals are combined using a weighted ensemble:
 
 The resulting trust score (0.0–1.0) is classified as SUPPORTED (≥0.75), PARTIAL (≥0.50), UNSUPPORTED (≥0.30), or CONTRADICTED (<0.30).
 
+## Self-Healing Re-Retrieve Loop (LangChain Integration)
+
+When `on_unsupported="re-retrieve"` is passed to `VerifyingLLM`, the integration
+implements an adaptive retrieval loop inspired by LangChain issue #33191:
+
+1. The LLM generates an answer from initial context.
+2. Verification identifies unsupported sentences.
+3. Each unsupported sentence's text is used as a new retrieval query.
+4. New chunks are appended to context (duplicates skipped).
+5. The LLM regenerates the answer with expanded context.
+6. Steps 2–5 repeat up to `max_retries` times (default 2).
+7. If verification still fails after all retries, the final `on_unsupported`
+   fallback is applied (one of "warn", "flag", "reject").
+
+This pattern allows the system to recover from grounding failures automatically
+by iteratively expanding the retrieval context based on which claims failed
+verification.
+
 ## Package Structure
 
 ```
@@ -54,6 +72,6 @@ athena_verify/
 ├── llm_judge.py         # Optional LLM-as-judge scoring
 ├── parser.py            # Sentence splitting
 └── integrations/
-    ├── langchain.py     # VerifyingLLM wrapper
+    ├── langchain.py     # VerifyingLLM wrapper (with re-retrieve loop)
     └── llamaindex.py    # VerifyingPostprocessor wrapper
 ```

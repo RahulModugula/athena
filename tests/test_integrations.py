@@ -135,6 +135,129 @@ class TestVerifyingLLM:
 
         assert response.content == "The cap is $1M."
 
+    def test_re_retrieve_success_on_second_attempt(self):
+        mock_llm = MagicMock()
+        mock_llm.predict.side_effect = [
+            "The cap is $5M.",  # First attempt (bad answer)
+            "The cap is $1M.",  # Second attempt (good answer after re-retrieve)
+        ]
+
+        mock_retriever = MagicMock()
+        mock_doc = MagicMock()
+        mock_doc.page_content = "The agreement sets a cap of $1M."
+        mock_retriever.get_relevant_documents.return_value = [mock_doc]
+
+        failed_result = _make_verification_result(passed=False, trust=0.3)
+        passed_result = _make_verification_result(passed=True, trust=0.85)
+
+        vllm = VerifyingLLM(
+            mock_llm,
+            retriever=mock_retriever,
+            max_retries=2,
+            on_unsupported="re-retrieve",
+        )
+
+        with patch(
+            "athena_verify.integrations.langchain.verify",
+            side_effect=[failed_result, passed_result],
+        ):
+            result = vllm.predict(
+                "What is the cap?",
+                context=["Some initial context."],
+            )
+
+        assert result == "The cap is $1M."
+        assert vllm.retry_count == 1
+        assert vllm.last_verification.verification_passed is True
+        mock_retriever.get_relevant_documents.assert_called()
+
+    def test_re_retrieve_exhausts_max_retries(self):
+        mock_llm = MagicMock()
+        mock_llm.predict.side_effect = [
+            "The cap is $5M.",
+            "The cap is $5M.",
+            "The cap is $5M.",
+        ]
+
+        mock_retriever = MagicMock()
+        mock_doc = MagicMock()
+        mock_doc.page_content = "Extra context."
+        mock_retriever.get_relevant_documents.return_value = [mock_doc]
+
+        failed_result = _make_verification_result(passed=False, trust=0.3)
+
+        vllm = VerifyingLLM(
+            mock_llm,
+            retriever=mock_retriever,
+            max_retries=2,
+            on_unsupported="re-retrieve",
+        )
+
+        with patch(
+            "athena_verify.integrations.langchain.verify",
+            return_value=failed_result,
+        ):
+            result = vllm.predict(
+                "What is the cap?",
+                context=["Initial context."],
+            )
+
+        assert result == "The cap is $5M."
+        assert vllm.retry_count == 2
+        mock_retriever.get_relevant_documents.assert_called()
+
+    def test_re_retrieve_without_retriever_falls_back(self):
+        mock_llm = MagicMock()
+        mock_llm.predict.return_value = "The cap is $5M."
+
+        failed_result = _make_verification_result(passed=False, trust=0.3)
+
+        vllm = VerifyingLLM(
+            mock_llm,
+            retriever=None,
+            on_unsupported="re-retrieve",
+        )
+
+        with patch(
+            "athena_verify.integrations.langchain.verify",
+            return_value=failed_result,
+        ):
+            result = vllm.predict(
+                "What is the cap?",
+                context=["Initial context."],
+            )
+
+        assert result == "The cap is $5M."
+        assert vllm.retry_count == 0
+
+    def test_re_retrieve_early_exit_on_pass(self):
+        mock_llm = MagicMock()
+        mock_llm.predict.return_value = "The cap is $1M."
+
+        mock_retriever = MagicMock()
+
+        passed_result = _make_verification_result(passed=True, trust=0.85)
+
+        vllm = VerifyingLLM(
+            mock_llm,
+            retriever=mock_retriever,
+            max_retries=2,
+            on_unsupported="re-retrieve",
+        )
+
+        with patch(
+            "athena_verify.integrations.langchain.verify",
+            return_value=passed_result,
+        ):
+            result = vllm.predict(
+                "What is the cap?",
+                context=["Initial context."],
+            )
+
+        assert result == "The cap is $1M."
+        assert vllm.retry_count == 0
+        mock_retriever.get_relevant_documents.assert_not_called()
+
 
 class TestVerifyingPostprocessor:
     def test_postprocess_nodes_passthrough(self):
