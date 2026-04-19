@@ -40,8 +40,14 @@ langchain = [
 llamaindex = [
     "llama-index>=0.10.0",
 ]
+langgraph = [
+    "langgraph>=0.2.0",
+]
+crewai = [
+    "crewai>=0.1.0",
+]
 all = [
-    "athena-verify[nli,llm,langchain,llamaindex]",
+    "athena-verify[nli,llm,langchain,llamaindex,langgraph,crewai]",
 ]
 dev = [
     "pytest>=8.0.0",

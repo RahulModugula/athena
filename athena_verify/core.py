@@ -23,6 +23,7 @@ from athena_verify.llm_judge import LLMClient, batch_generate_revisions, batch_j
 from athena_verify.models import (
     Chunk,
     SentenceScore,
+    StepResult,
     StreamingResult,
     SupportingSpan,
     VerificationResult,
@@ -32,6 +33,47 @@ from athena_verify.overlap import best_overlap_score
 from athena_verify.parser import sentence_buffer, split_sentences
 
 logger = structlog.get_logger()
+
+
+def verify_step(
+    claim: str,
+    evidence: str | list[str],
+    threshold: float = 0.7,
+    *,
+    nli_model: str = "cross-encoder/nli-deberta-v3-base",
+) -> StepResult:
+    """Verify a single claim against evidence for multi-step agents.
+
+    Treats the claim as both question and answer, verifying it against
+    the provided evidence. Returns a StepResult suitable for circuit-breaker
+    patterns where agents halt on fabricated intermediate claims.
+
+    Args:
+        claim: The factual claim to verify.
+        evidence: Evidence supporting or refuting the claim (str or list of str).
+        threshold: Minimum trust score for claim to pass (default 0.7).
+        nli_model: Cross-encoder model name for NLI scoring.
+
+    Returns:
+        StepResult with passed flag, trust_score, and action ("continue" or "halt").
+    """
+    if isinstance(evidence, str):
+        evidence = [evidence]
+
+    result = verify(
+        question=claim,
+        answer=claim,
+        context=evidence,
+        nli_model=nli_model,
+        trust_threshold=threshold,
+    )
+
+    return StepResult(
+        passed=result.verification_passed,
+        trust_score=result.trust_score,
+        action="continue" if result.verification_passed else "halt",
+        sentences=result.sentences,
+    )
 
 
 def verify(

@@ -37,6 +37,15 @@ class Chunk(BaseModel):
         raise TypeError(f"Cannot coerce {type(raw)} into Chunk")
 
 
+class SupportingSpan(BaseModel):
+    """A span in a context chunk that supports a sentence."""
+
+    chunk_idx: int = Field(description="Index of the source chunk in the context list")
+    start: int = Field(ge=0, description="Start character offset in the chunk text")
+    end: int = Field(ge=0, description="End character offset in the chunk text")
+    text: str = Field(description="The supporting substring")
+
+
 class SentenceScore(BaseModel):
     """Per-sentence verification result."""
 
@@ -60,7 +69,7 @@ class SentenceScore(BaseModel):
         default=None,
         description="The context chunk with highest overlap",
     )
-    supporting_spans: list[dict[str, Any]] = Field(
+    supporting_spans: list[SupportingSpan] = Field(
         default_factory=list,
         description="Spans in context that support this sentence",
     )
@@ -103,6 +112,28 @@ class StreamingResult(BaseModel):
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict."""
         return self.model_dump(mode="json")
+
+
+class StepResult(BaseModel):
+    """Result of verifying a single claim in a multi-step agent.
+
+    Used by verify_step() for circuit-breaker patterns where agents
+    need to halt on fabricated intermediate claims.
+    """
+
+    passed: bool = Field(description="Whether the claim is supported by evidence")
+    trust_score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Calibrated trust score (0.0-1.0)",
+    )
+    action: str = Field(
+        description="Agent action: 'continue' if passed, 'halt' if not",
+    )
+    sentences: list[SentenceScore] = Field(
+        default_factory=list,
+        description="Per-sentence verification details",
+    )
 
 
 class VerificationResult(BaseModel):

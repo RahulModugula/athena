@@ -22,20 +22,23 @@ from athena_verify.core import (
     verify_async,
     verify_batch,
     verify_batch_async,
+    verify_step,
     verify_stream,
 )
 from athena_verify.llm_judge import LLMClient
-from athena_verify.models import Chunk, SentenceScore, StreamingResult, SupportingSpan, VerificationResult
+from athena_verify.models import Chunk, SentenceScore, StepResult, StreamingResult, SupportingSpan, VerificationResult
 
 __all__ = [
     "verify",
     "verify_async",
     "verify_batch",
     "verify_batch_async",
+    "verify_step",
     "verify_stream",
     "verified_completion",
     "VerificationResult",
     "StreamingResult",
+    "StepResult",
     "SentenceScore",
     "SupportingSpan",
     "Chunk",
