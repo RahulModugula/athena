@@ -49,3 +49,17 @@ class TestSplitSentences:
         """Extra whitespace should be handled."""
         result = split_sentences("First.   Second.")
         assert len(result) == 2
+
+    def test_abbreviations_with_period(self):
+        """Abbreviations like 'Dr.' should not split sentences."""
+        result = split_sentences("Dr. Smith said hello. The policy is clear.")
+        assert len(result) == 2
+        assert result[0] == "Dr. Smith said hello."
+        assert result[1] == "The policy is clear."
+
+    def test_abbreviations_us(self):
+        """Abbreviations like 'U.S.' should not split sentences."""
+        result = split_sentences("Dr. Smith said hello. The U.S. policy is X.")
+        assert len(result) == 2
+        assert "Dr. Smith" in result[0]
+        assert "U.S. policy" in result[1]

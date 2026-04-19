@@ -51,11 +51,10 @@ async def sentence_buffer(
 
 
 def split_sentences(text: str) -> list[str]:
-    """Split text into sentences.
+    """Split text into sentences using NLTK's Punkt tokenizer.
 
-    Uses a regex-based approach that handles common English sentence
-    boundaries. For production use with non-English text, consider
-    installing NLTK and using nltk.sent_tokenize().
+    Falls back to regex-based splitting if NLTK is not installed.
+    Handles abbreviations like "Dr. Smith" and "U.S." correctly.
 
     Args:
         text: The answer text to split.
@@ -66,13 +65,32 @@ def split_sentences(text: str) -> list[str]:
     if not text or not text.strip():
         return []
 
+    try:
+        import nltk
+
+        nltk.data.find("tokenizers/punkt_tab")
+        return [s.strip() for s in nltk.sent_tokenize(text) if s.strip()]
+    except (ImportError, LookupError):
+        return _split_sentences_regex(text)
+
+
+def _split_sentences_regex(text: str) -> list[str]:
+    """Split text into sentences using regex (fallback).
+
+    Used when NLTK is not available. Handles common English sentence
+    boundaries but may split incorrectly on abbreviations like "Dr. Smith".
+
+    Args:
+        text: The answer text to split.
+
+    Returns:
+        List of non-empty sentence strings.
+    """
     # Normalize whitespace
     text = text.strip()
 
     # Split on sentence-ending punctuation followed by space or end-of-string.
     # Handles: period, exclamation, question mark.
-    # Handles abbreviations poorly (e.g., "Dr. Smith" splits incorrectly).
-    # This is acceptable for v1; NLTK integration is a future improvement.
     sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
 
     # Filter empty strings and strip whitespace
@@ -83,23 +101,3 @@ def split_sentences(text: str) -> list[str]:
             result.append(s)
 
     return result
-
-
-def split_sentences_nltk(text: str) -> list[str]:
-    """Split text into sentences using NLTK's Punkt tokenizer.
-
-    Falls back to regex-based splitting if NLTK is not installed.
-
-    Args:
-        text: The answer text to split.
-
-    Returns:
-        List of non-empty sentence strings.
-    """
-    try:
-        import nltk
-
-        nltk.data.find("tokenizers/punkt_tab")
-        return [s.strip() for s in nltk.sent_tokenize(text) if s.strip()]
-    except (ImportError, LookupError):
-        return split_sentences(text)

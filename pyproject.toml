@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
     "pydantic>=2.9.0",
     "structlog>=24.0.0",
+    "nltk>=3.8.0",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +50,9 @@ dev = [
     "ruff>=0.8.0",
     "mypy>=1.13.0",
 ]
+
+[project.scripts]
+athena-verify = "athena_verify.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/RahulModugula/athena"
