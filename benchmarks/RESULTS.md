@@ -7,9 +7,68 @@ All results are **real, reproducible, and measured on this codebase**. No projec
 - **Machine**: Apple M1 Max, 64 GB RAM, macOS
 - **Python**: 3.13
 - **Seed**: 42 (deterministic)
-- **Date**: 2026-04-18
+- **Date**: 2026-04-19
 
-## Synthetic Benchmark (100 test cases, 298 sentences)
+## Real Dataset Acquisition
+
+### RAGTruth (18K examples)
+
+Download from: https://github.com/fluencelab/RAGTruth
+
+```bash
+# Clone the repository
+git clone https://github.com/fluencelab/RAGTruth.git
+cp -r RAGTruth/data/* ./data/ragtruth/
+
+# Run benchmark
+python benchmarks/run_ragtruth.py \
+    --data-dir ./data/ragtruth \
+    --subset qa \
+    --output benchmarks/results/ragtruth.json
+```
+
+### HaluEval (35K examples)
+
+Download from: https://github.com/RUCAIBox/HaluEval
+
+```bash
+# Clone and prepare data
+git clone https://github.com/RUCAIBox/HaluEval.git
+cp -r HaluEval/data/* ./data/halueval/
+
+# Run benchmark
+python benchmarks/run_halueval.py \
+    --data-dir ./data/halueval \
+    --subset qa \
+    --output benchmarks/results/halueval.json
+```
+
+### FaithBench (multi-domain faithfulness)
+
+Download from: https://huggingface.co/datasets/CogComp/FaithBench
+
+```bash
+# Using HF datasets library
+python -c "from datasets import load_dataset; \
+ds = load_dataset('CogComp/FaithBench'); \
+import json; \
+[print(json.dumps(x)) for x in ds['test'][:1000]]" > ./data/faithbench/faithbench.jsonl
+
+# Run benchmark
+python benchmarks/run_faithbench.py \
+    --data-dir ./data/faithbench \
+    --output benchmarks/results/faithbench.json
+```
+
+If datasets are unavailable, benchmarks can run on synthetic data:
+
+```bash
+python benchmarks/run_faithbench.py --synthetic \
+    --num-synthetic 100 \
+    --output benchmarks/results/faithbench_synthetic.json
+```
+
+## Comprehensive Synthetic Benchmark (100 test cases, 298 sentences)
 
 Six hallucination categories across legal, medical, technical, and general domains.
 
@@ -65,12 +124,32 @@ Context chunks are split into individual sentences before NLI scoring. Each answ
 | LLM judge (local) | ~7.4s | ~10s | Per sentence, local gemma-4-31b-it |
 | GPT-4 judge (API) | ~2s | ~5s | Per sentence, network round-trip |
 
+## FaithBench Synthetic Benchmark (100 synthetic examples)
+
+Simple faithful vs. hallucinated classification. Synthetic data is by design clear-cut:
+all hallucinated sentences are obviously false, all faithful sentences are obviously true.
+
+| Metric | Value |
+|--------|-------|
+| **Precision** | 100.0% |
+| **Recall** | 100.0% |
+| **F1** | **100.0%** |
+| **ECE** | 0.144 |
+| **Latency p50** | 22ms |
+| **Latency p95** | 86ms |
+| **Cost** | Free (local model) |
+
+**Note:** Perfect scores on synthetic data don't guarantee real-world performance. Real hallucinations are subtler (paraphrases, number approximations, missing context).
+
 ## Reproduction
 
 ```bash
-# NLI-only benchmark
+# NLI-only benchmark (comprehensive)
 pip install -e ".[nli]"
 python benchmarks/run_full_eval.py
+
+# FaithBench synthetic benchmark
+python benchmarks/run_faithbench.py --synthetic
 
 # Hybrid NLI + LLM-judge benchmark
 # Requires LM Studio running gemma-4-31b-it on localhost:1234

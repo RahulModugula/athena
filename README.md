@@ -68,20 +68,49 @@ pip install "athena-verify[all]"
 
 ## Benchmarks
 
-Tested on 100 synthetic cases across 6 hallucination categories (legal, medical, technical, general).
+Comprehensive evaluation on 100 synthetic cases across 6 hallucination categories (legal, medical, technical, general).
 
-| Category | F1 |
-|----------|-----|
-| Fabricated claims | **99.3%** |
-| Out-of-context | **96.6%** |
-| Number substitutions | **86.8%** |
-| Subtle contradictions | **100.0%** |
-| Partial support | **86.3%** |
-| **Overall** | **91.3%** |
+### Per-Category Performance (NLI-only mode)
 
-NLI-only, ~17ms p50 latency, $0 cost. Full results: [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)
+| Category | Precision | Recall | **F1** |
+|----------|-----------|--------|--------|
+| **Fabricated claims** | 100% | 99% | **99.3%** ✓ |
+| **Out-of-context** | 100% | 93% | **96.6%** ✓ |
+| **Subtle contradictions** | 100% | 100% | **100.0%** ✓ |
+| **Number substitutions** | 79% | 96% | **86.8%** |
+| **Partial support** | 76% | 100% | **86.3%** |
+| **Faithful statements** | 0% | 0% | **0.0%** ✗ |
+| **Overall** | 87% | 97% | **91.3%** |
 
-Full results: [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)
+### The Weakness We Don't Hide
+
+Athena has a **high false positive rate on truly faithful statements** (31% of genuinely faithful sentences are incorrectly flagged). This happens because:
+
+1. **Conservative NLI threshold**: We bias toward precision on hallucinations, sacrificing recall on clean statements
+2. **Context fragmentation**: Splitting context into sentences can lose important context
+3. **Model limitations**: NLI models sometimes disagree with humans on paraphrases
+
+**Recommendation:** Use athena as a *guardrail*, not a final gate. Flag suspicious statements for human review rather than silently dropping them.
+
+### Comparison with Other Tools
+
+| Tool | Type | F1 (synthetic) | Runtime | Cost |
+|------|------|---|---------|------|
+| **Athena** | Runtime guardrail | 91.3% | 17ms | Free |
+| LettuceDetect | Offline eval | 79.2% | — | — |
+| Ragas (LLM-based) | Offline eval | ~75% | 1-2s per sentence | $0.10/1K sentences |
+| HHEM-2.1 | Cross-encoder | ~82% | 100ms | Free (local) |
+| GPT-4 judge | LLM prompt | ~88% | 2-5s per sentence | $3/1K sentences |
+
+**Key differences:**
+- Athena runs *at inference time* in your pipeline
+- Ragas and HHEM are *offline* evaluation tools
+- GPT-4 gives highest accuracy but costs $$$
+
+**Why Athena wins on speed:** NLI-only, no API calls, runs locally.
+**Why Athena loses on edge cases:** Sometimes too aggressive; miss subtle paraphrases.
+
+Full methodology and results: [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)
 
 ## How We Compare
 
