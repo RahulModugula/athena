@@ -182,6 +182,12 @@ Returns `VerificationResult` with `trust_score`, `sentences`, `supported`, `unsu
 | [`examples/langchain_example.py`](examples/langchain_example.py) | LangChain RetrievalQA |
 | [`examples/llamaindex_example.py`](examples/llamaindex_example.py) | LlamaIndex query engine |
 
+## Documentation
+
+- **[Security & Data Privacy](docs/security.md)** — What data leaves your machine? How to stay fully offline?
+- **[Threshold Tuning](docs/tuning.md)** — How to pick `trust_threshold` for your domain (legal, support, etc.)
+- **[NLI Model Trade-offs](docs/models.md)** — Speed vs accuracy: which model to use (DeBERTa, Lightweight, etc.)
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). PRs welcome — especially benchmark results, new integrations, and NLI model improvements.
