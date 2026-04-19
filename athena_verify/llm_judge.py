@@ -9,11 +9,45 @@ disagree.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Protocol
 
 import structlog
 
 logger = structlog.get_logger()
+
+
+class CircuitBreaker:
+    """Simple circuit breaker for LLM calls."""
+
+    def __init__(self, failure_threshold: int = 5, reset_timeout: float = 30.0):
+        self.failure_threshold = failure_threshold
+        self.reset_timeout = reset_timeout
+        self.failure_count = 0
+        self.last_failure_time: float | None = None
+        self.is_open = False
+
+    def record_success(self) -> None:
+        self.failure_count = 0
+        self.is_open = False
+
+    def record_failure(self) -> None:
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        if self.failure_count >= self.failure_threshold:
+            self.is_open = True
+
+    def is_available(self) -> bool:
+        if not self.is_open:
+            return True
+        if self.last_failure_time is None:
+            return True
+        elapsed = time.time() - self.last_failure_time
+        if elapsed >= self.reset_timeout:
+            self.is_open = False
+            self.failure_count = 0
+            return True
+        return False
 
 JUDGE_PROMPT = """You are a verification judge. Given a context and a sentence, determine whether the sentence is supported by the context.
 
@@ -61,6 +95,7 @@ class OpenAIJudge:
         self.model = model
         self.api_key = api_key
         self._client: object | None = None
+        self._circuit_breaker = CircuitBreaker(failure_threshold=5, reset_timeout=30.0)
 
     def _get_client(self) -> Any:
         from openai import OpenAI
@@ -73,14 +108,30 @@ class OpenAIJudge:
         return self._client
 
     def complete(self, prompt: str) -> str:
-        client = self._get_client()
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=200,
-        )
-        return response.choices[0].message.content or ""
+        if not self._circuit_breaker.is_available():
+            raise RuntimeError("Circuit breaker is open; LLM service temporarily unavailable")
+
+        backoff_times = [1, 2, 4]
+        last_error: Exception | None = None
+
+        for attempt, backoff in enumerate(backoff_times):
+            try:
+                client = self._get_client()
+                response = client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                    max_tokens=200,
+                )
+                self._circuit_breaker.record_success()
+                return response.choices[0].message.content or ""
+            except Exception as e:
+                last_error = e
+                self._circuit_breaker.record_failure()
+                if attempt < len(backoff_times) - 1:
+                    time.sleep(backoff)
+
+        raise last_error or RuntimeError("OpenAI API call failed")
 
 
 class AnthropicJudge:
@@ -90,6 +141,7 @@ class AnthropicJudge:
         self.model = model
         self.api_key = api_key
         self._client: object | None = None
+        self._circuit_breaker = CircuitBreaker(failure_threshold=5, reset_timeout=30.0)
 
     def _get_client(self) -> Any:
         import anthropic
@@ -102,13 +154,29 @@ class AnthropicJudge:
         return self._client
 
     def complete(self, prompt: str) -> str:
-        client = self._get_client()
-        response = client.messages.create(
-            model=self.model,
-            max_tokens=200,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.content[0].text if response.content else ""
+        if not self._circuit_breaker.is_available():
+            raise RuntimeError("Circuit breaker is open; LLM service temporarily unavailable")
+
+        backoff_times = [1, 2, 4]
+        last_error: Exception | None = None
+
+        for attempt, backoff in enumerate(backoff_times):
+            try:
+                client = self._get_client()
+                response = client.messages.create(
+                    model=self.model,
+                    max_tokens=200,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                self._circuit_breaker.record_success()
+                return response.content[0].text if response.content else ""
+            except Exception as e:
+                last_error = e
+                self._circuit_breaker.record_failure()
+                if attempt < len(backoff_times) - 1:
+                    time.sleep(backoff)
+
+        raise last_error or RuntimeError("Anthropic API call failed")
 
 
 def judge_sentence(

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from functools import lru_cache
 from typing import Any
 
 import structlog
@@ -20,8 +21,6 @@ NLI_MODEL_ALIASES: dict[str, str] = {
     "vectara": "vectara/hallucination_evaluation_model",
     "deberta-base": "MoritzLaworr/NLI-deberta-base",
 }
-
-_nli_cache: dict[str, Any] = {}
 
 
 def resolve_nli_model(model_name: str) -> str:
@@ -36,6 +35,7 @@ def resolve_nli_model(model_name: str) -> str:
     return NLI_MODEL_ALIASES.get(model_name, model_name)
 
 
+@lru_cache(maxsize=32)
 def get_nli_model(model_name: str = "cross-encoder/nli-deberta-v3-base") -> Any:
     """Load the NLI cross-encoder model (lazy, cached).
 
@@ -47,9 +47,6 @@ def get_nli_model(model_name: str = "cross-encoder/nli-deberta-v3-base") -> Any:
     """
     resolved = resolve_nli_model(model_name)
 
-    if resolved in _nli_cache:
-        return _nli_cache[resolved]
-
     try:
         from sentence_transformers import CrossEncoder
     except ImportError as e:
@@ -59,8 +56,7 @@ def get_nli_model(model_name: str = "cross-encoder/nli-deberta-v3-base") -> Any:
         ) from e
 
     logger.info("loading_nli_model", model=resolved, alias=model_name)
-    _nli_cache[resolved] = CrossEncoder(resolved)
-    return _nli_cache[resolved]
+    return CrossEncoder(resolved)
 
 
 def _softmax_entailment(logits: Any) -> float:

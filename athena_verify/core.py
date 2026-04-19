@@ -7,6 +7,7 @@ in the provided context chunks.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -224,7 +225,7 @@ def verify(
     if latency_budget_ms is not None:
         metadata_dict["budget_exceeded"] = budget_exceeded
 
-    return VerificationResult(
+    result = VerificationResult(
         question=question,
         answer=answer,
         trust_score=round(overall_trust, 4),
@@ -234,6 +235,16 @@ def verify(
         verification_passed=passed,
         metadata=metadata_dict,
     )
+
+    if os.getenv("ATHENA_OTEL_ENABLED") == "1":
+        otel_span = result.to_otel_span()
+        logger.info("otel_span_generated", span=otel_span)
+
+    if os.getenv("ATHENA_LANGFUSE_ENABLED") == "1":
+        langfuse_trace = result.to_langfuse_trace()
+        logger.info("langfuse_trace_generated", trace=langfuse_trace)
+
+    return result
 
 
 async def verify_async(
@@ -367,7 +378,7 @@ async def verify_async(
     if latency_budget_ms is not None:
         metadata_dict["budget_exceeded"] = budget_exceeded
 
-    return VerificationResult(
+    result = VerificationResult(
         question=question,
         answer=answer,
         trust_score=round(overall_trust, 4),
@@ -377,6 +388,16 @@ async def verify_async(
         verification_passed=passed,
         metadata=metadata_dict,
     )
+
+    if os.getenv("ATHENA_OTEL_ENABLED") == "1":
+        otel_span = result.to_otel_span()
+        logger.info("otel_span_generated", span=otel_span)
+
+    if os.getenv("ATHENA_LANGFUSE_ENABLED") == "1":
+        langfuse_trace = result.to_langfuse_trace()
+        logger.info("langfuse_trace_generated", trace=langfuse_trace)
+
+    return result
 
 
 def verify_batch(
@@ -626,11 +647,97 @@ async def verify_batch_async(
     )
 
     for q_idx in range(len(questions_list)):
-        chunks = all_chunks[q_idx]
-        chunk_texts = [c.content for c in chunks]
-        sentences = all_sentences[q_idx]
+        try:
+            chunks = all_chunks[q_idx]
+            chunk_texts = [c.content for c in chunks]
+            sentences = all_sentences[q_idx]
 
-        if not sentences:
+            if not sentences:
+                all_results.append(
+                    VerificationResult(
+                        question=questions_list[q_idx],
+                        answer=answers_list[q_idx],
+                        trust_score=0.0,
+                        sentences=[],
+                        unsupported=[],
+                        supported=[],
+                        verification_passed=False,
+                        metadata={"error": "no_sentences_found", "latency_ms": 0},
+                    )
+                )
+                continue
+
+            offset = pair_offsets[q_idx]
+            sentence_scores: list[SentenceScore] = []
+            llm_scores: list[float | None] = [None] * len(sentences)
+
+            if use_llm_judge and llm_client is not None:
+                combined_context = " ".join(chunk_texts)
+                judge_results = batch_judge_sentences(
+                    sentences, combined_context, questions_list[q_idx], llm_client
+                )
+                llm_scores = [score for score, _ in judge_results]
+
+            for i, sentence in enumerate(sentences):
+                nli = nli_scores_all[offset + i] if (offset + i) < len(nli_scores_all) else 0.0
+                overlap, best_chunk = best_overlap_score(sentence, chunk_texts)
+                llm = llm_scores[i] if i < len(llm_scores) else None
+
+                trust = compute_trust_score(nli, overlap, llm, weights)
+                status = classify_support(trust)
+
+                sentence_scores.append(
+                    SentenceScore(
+                        text=sentence,
+                        index=i,
+                        nli_score=nli,
+                        lexical_overlap=overlap,
+                        llm_judge_score=llm,
+                        trust_score=trust,
+                        support_status=status,
+                        best_matching_context=best_chunk,
+                    )
+                )
+
+            overall_trust, passed = compute_overall_trust(sentence_scores, trust_threshold)
+
+            supported = [s for s in sentence_scores if s.support_status in ("SUPPORTED", "PARTIAL")]
+            unsupported = [
+                s for s in sentence_scores if s.support_status in ("UNSUPPORTED", "CONTRADICTED")
+            ]
+
+            if suggest_revisions and llm_client is not None and unsupported:
+                combined_context = " ".join(chunk_texts)
+                revisions = batch_generate_revisions(
+                    [s.text for s in unsupported],
+                    combined_context,
+                    questions_list[q_idx],
+                    llm_client,
+                )
+                for sent, revision in zip(unsupported, revisions, strict=True):
+                    sent.suggested_fix = revision
+
+            all_results.append(
+                VerificationResult(
+                    question=questions_list[q_idx],
+                    answer=answers_list[q_idx],
+                    trust_score=round(overall_trust, 4),
+                    sentences=sentence_scores,
+                    unsupported=unsupported,
+                    supported=supported,
+                    verification_passed=passed,
+                    metadata={
+                        "nli_model": nli_model,
+                        "num_chunks": len(chunks),
+                        "num_sentences": len(sentences),
+                        "latency_ms": round((time.time() - start_time) * 1000, 1),
+                        "llm_judge_used": use_llm_judge and llm_client is not None,
+                        "revisions_suggested": suggest_revisions and llm_client is not None,
+                    },
+                )
+            )
+        except Exception as e:
+            logger.exception("batch_item_processing_error", q_idx=q_idx, error=str(e))
             all_results.append(
                 VerificationResult(
                     question=questions_list[q_idx],
@@ -640,80 +747,12 @@ async def verify_batch_async(
                     unsupported=[],
                     supported=[],
                     verification_passed=False,
-                    metadata={"error": "no_sentences_found", "latency_ms": 0},
+                    metadata={
+                        "error": f"batch_processing_failed: {str(e)}",
+                        "latency_ms": round((time.time() - start_time) * 1000, 1),
+                    },
                 )
             )
-            continue
-
-        offset = pair_offsets[q_idx]
-        sentence_scores: list[SentenceScore] = []
-        llm_scores: list[float | None] = [None] * len(sentences)
-
-        if use_llm_judge and llm_client is not None:
-            combined_context = " ".join(chunk_texts)
-            judge_results = batch_judge_sentences(
-                sentences, combined_context, questions_list[q_idx], llm_client
-            )
-            llm_scores = [score for score, _ in judge_results]
-
-        for i, sentence in enumerate(sentences):
-            nli = nli_scores_all[offset + i] if (offset + i) < len(nli_scores_all) else 0.0
-            overlap, best_chunk = best_overlap_score(sentence, chunk_texts)
-            llm = llm_scores[i] if i < len(llm_scores) else None
-
-            trust = compute_trust_score(nli, overlap, llm, weights)
-            status = classify_support(trust)
-
-            sentence_scores.append(
-                SentenceScore(
-                    text=sentence,
-                    index=i,
-                    nli_score=nli,
-                    lexical_overlap=overlap,
-                    llm_judge_score=llm,
-                    trust_score=trust,
-                    support_status=status,
-                    best_matching_context=best_chunk,
-                )
-            )
-
-        overall_trust, passed = compute_overall_trust(sentence_scores, trust_threshold)
-
-        supported = [s for s in sentence_scores if s.support_status in ("SUPPORTED", "PARTIAL")]
-        unsupported = [
-            s for s in sentence_scores if s.support_status in ("UNSUPPORTED", "CONTRADICTED")
-        ]
-
-        if suggest_revisions and llm_client is not None and unsupported:
-            combined_context = " ".join(chunk_texts)
-            revisions = batch_generate_revisions(
-                [s.text for s in unsupported],
-                combined_context,
-                questions_list[q_idx],
-                llm_client,
-            )
-            for sent, revision in zip(unsupported, revisions, strict=True):
-                sent.suggested_fix = revision
-
-        all_results.append(
-            VerificationResult(
-                question=questions_list[q_idx],
-                answer=answers_list[q_idx],
-                trust_score=round(overall_trust, 4),
-                sentences=sentence_scores,
-                unsupported=unsupported,
-                supported=supported,
-                verification_passed=passed,
-                metadata={
-                    "nli_model": nli_model,
-                    "num_chunks": len(chunks),
-                    "num_sentences": len(sentences),
-                    "latency_ms": round((time.time() - start_time) * 1000, 1),
-                    "llm_judge_used": use_llm_judge and llm_client is not None,
-                    "revisions_suggested": suggest_revisions and llm_client is not None,
-                },
-            )
-        )
 
     return all_results
 
