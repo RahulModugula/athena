@@ -1,0 +1,4 @@
+athena-verify[all]
+langchain>=0.3.0
+langchain-core>=0.3.0
+llama-index>=0.10.0
