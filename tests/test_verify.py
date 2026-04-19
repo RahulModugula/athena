@@ -177,3 +177,93 @@ class TestVerifyEdgeCases:
         )
         assert isinstance(result, VerificationResult)
         assert result.metadata["num_chunks"] == 2
+
+
+class TestLatencyBudget:
+    """Test latency_budget_ms parameter."""
+
+    def test_latency_budget_none_allows_llm_judge(self):
+        """latency_budget_ms=None (default) allows LLM judge."""
+        from unittest.mock import MagicMock
+
+        llm_client = MagicMock()
+        llm_client.complete.return_value = "test"
+
+        result = verify(
+            question="What?",
+            answer="Some answer.",
+            context=["Some context"],
+            use_llm_judge=True,
+            llm_client=llm_client,
+        )
+        assert isinstance(result, VerificationResult)
+
+    def test_latency_budget_100_skips_llm_judge(self):
+        """latency_budget_ms <= 100 skips LLM judge entirely."""
+        from unittest.mock import MagicMock
+
+        llm_client = MagicMock()
+        llm_client.complete.return_value = "test"
+
+        result = verify(
+            question="What?",
+            answer="Some answer.",
+            context=["Some context"],
+            use_llm_judge=True,
+            llm_client=llm_client,
+            latency_budget_ms=50,
+        )
+        assert result.metadata["llm_judge_used"] is False
+
+    def test_latency_budget_exceeds_recorded(self):
+        """budget_exceeded is recorded in metadata when latency_budget_ms is set."""
+        result = verify(
+            question="What?",
+            answer="Some answer.",
+            context=["Some context"],
+            latency_budget_ms=50,
+        )
+        assert "budget_exceeded" in result.metadata
+
+    def test_latency_budget_high_allows_llm_judge(self):
+        """latency_budget_ms > 100 may allow LLM judge if time permits."""
+        from unittest.mock import MagicMock
+
+        llm_client = MagicMock()
+        llm_client.complete.return_value = "test"
+
+        result = verify(
+            question="What?",
+            answer="Some answer.",
+            context=["Some context"],
+            use_llm_judge=True,
+            llm_client=llm_client,
+            latency_budget_ms=5000,
+        )
+        assert isinstance(result, VerificationResult)
+        assert "budget_exceeded" in result.metadata
+
+    def test_latency_budget_llm_judge_never_called_with_budget_50(self):
+        """With latency_budget_ms=50, batch_judge_sentences is never called."""
+        from unittest.mock import MagicMock, patch
+
+        llm_client = MagicMock()
+        result = verify(
+            question="What?",
+            answer="Some answer.",
+            context=["Some context"],
+            use_llm_judge=True,
+            llm_client=llm_client,
+            latency_budget_ms=50,
+        )
+
+        with patch("athena_verify.core.batch_judge_sentences") as mock_judge:
+            result = verify(
+                question="What?",
+                answer="Some answer.",
+                context=["Some context"],
+                use_llm_judge=True,
+                llm_client=llm_client,
+                latency_budget_ms=50,
+            )
+            assert mock_judge.call_count == 0

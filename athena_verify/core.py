@@ -23,6 +23,7 @@ from athena_verify.models import (
     Chunk,
     SentenceScore,
     StreamingResult,
+    SupportingSpan,
     VerificationResult,
 )
 from athena_verify.nli import batch_compute_entailment, batch_compute_entailment_async
@@ -43,6 +44,7 @@ def verify(
     trust_threshold: float = 0.70,
     weights: dict[str, float] | None = None,
     suggest_revisions: bool = False,
+    latency_budget_ms: int | None = None,
 ) -> VerificationResult:
     """Verify an LLM answer against retrieved context chunks.
 
@@ -61,6 +63,8 @@ def verify(
         trust_threshold: Minimum trust score for verification to pass.
         weights: Custom weights for the trust score ensemble.
         suggest_revisions: Whether to generate LLM-powered corrections for unsupported sentences.
+        latency_budget_ms: Latency budget in milliseconds. None (default): current behavior.
+            <= 100: skip LLM judge. > 100: only escalate borderline if budget covers it.
 
     Returns:
         VerificationResult with per-sentence scores and overall assessment.
@@ -91,18 +95,31 @@ def verify(
     # contains multiple sentences of info, the model classifies entailed
     # hypotheses as "neutral" because the premise has information BEYOND the
     # hypothesis. Fix: split chunks into individual sentences for NLI scoring.
+    _SPAN_ENTAILMENT_THRESHOLD = 0.5
+
     context_units: list[str] = []
-    for chunk in chunk_texts:
+    # (chunk_idx, char_start, char_end) into the original chunk text
+    unit_locations: list[tuple[int, int, int]] = []
+    for chunk_idx, chunk in enumerate(chunk_texts):
         sub = split_sentences(chunk)
-        context_units.extend(sub if sub else [chunk])
+        if not sub:
+            sub = [chunk]
+        for unit in sub:
+            char_start = chunk.find(unit)
+            if char_start == -1:
+                char_start = 0
+            context_units.append(unit)
+            unit_locations.append((chunk_idx, char_start, char_start + len(unit)))
 
     nli_pairs = [(unit, sentence) for sentence in sentences for unit in context_units]
     nli_scores_flat = batch_compute_entailment(nli_pairs, model_name=nli_model)
     nli_scores: list[float] = []
     nli_best_chunks: list[str | None] = []
+    per_sentence_unit_scores: list[list[float]] = []
     for i in range(len(sentences)):
         start = i * len(context_units)
         unit_scores = nli_scores_flat[start : start + len(context_units)]
+        per_sentence_unit_scores.append(unit_scores)
         if unit_scores:
             best_idx = unit_scores.index(max(unit_scores))
             nli_scores.append(unit_scores[best_idx])
@@ -114,12 +131,29 @@ def verify(
     # --- Lexical overlap scoring ---
     overlap_results = [best_overlap_score(s, chunk_texts) for s in sentences]
 
-    # --- Optional LLM-as-judge scoring ---
+    # --- Optional LLM-as-judge scoring with latency budget ---
     llm_scores: list[float | None] = [None] * len(sentences)
-    if use_llm_judge and llm_client is not None:
+    budget_exceeded = False
+    llm_judge_avg_ms = 2000.0
+
+    should_use_llm = use_llm_judge and llm_client is not None
+    if latency_budget_ms is not None and latency_budget_ms <= 100:
+        should_use_llm = False
+
+    if should_use_llm and latency_budget_ms is not None and latency_budget_ms > 100:
+        elapsed_so_far = (time.time() - start_time) * 1000
+        remaining_budget = latency_budget_ms - elapsed_so_far
+
+        if remaining_budget < llm_judge_avg_ms:
+            should_use_llm = False
+            budget_exceeded = True
+
+    if should_use_llm:
         combined_context = " ".join(chunk_texts)
+        judge_start = time.time()
         judge_results = batch_judge_sentences(sentences, combined_context, question, llm_client)
         llm_scores = [score for score, _ in judge_results]
+        llm_judge_avg_ms = (time.time() - judge_start) * 1000 / len(sentences) if sentences else 2000.0
 
     # --- Build per-sentence results ---
     sentence_scores: list[SentenceScore] = []
@@ -131,6 +165,18 @@ def verify(
         trust = compute_trust_score(nli, overlap, llm, weights)
         status = classify_support(trust)
 
+        unit_scores_i = per_sentence_unit_scores[i] if i < len(per_sentence_unit_scores) else []
+        supporting_spans = [
+            SupportingSpan(
+                chunk_idx=unit_locations[j][0],
+                start=unit_locations[j][1],
+                end=unit_locations[j][2],
+                text=context_units[j],
+            )
+            for j, score in enumerate(unit_scores_i)
+            if score >= _SPAN_ENTAILMENT_THRESHOLD
+        ]
+
         sentence_scores.append(
             SentenceScore(
                 text=sentence,
@@ -141,6 +187,7 @@ def verify(
                 trust_score=trust,
                 support_status=status,
                 best_matching_context=best_chunk,
+                supporting_spans=supporting_spans,
             )
         )
 
@@ -166,6 +213,17 @@ def verify(
 
     latency_ms = (time.time() - start_time) * 1000
 
+    metadata_dict: dict[str, Any] = {
+        "nli_model": nli_model,
+        "num_chunks": len(chunks),
+        "num_sentences": len(sentences),
+        "latency_ms": round(latency_ms, 1),
+        "llm_judge_used": should_use_llm,
+        "revisions_suggested": suggest_revisions and llm_client is not None,
+    }
+    if latency_budget_ms is not None:
+        metadata_dict["budget_exceeded"] = budget_exceeded
+
     return VerificationResult(
         question=question,
         answer=answer,
@@ -174,14 +232,7 @@ def verify(
         unsupported=unsupported,
         supported=supported,
         verification_passed=passed,
-        metadata={
-            "nli_model": nli_model,
-            "num_chunks": len(chunks),
-            "num_sentences": len(sentences),
-            "latency_ms": round(latency_ms, 1),
-            "llm_judge_used": use_llm_judge and llm_client is not None,
-            "revisions_suggested": suggest_revisions and llm_client is not None,
-        },
+        metadata=metadata_dict,
     )
 
 
@@ -196,6 +247,7 @@ async def verify_async(
     trust_threshold: float = 0.70,
     weights: dict[str, float] | None = None,
     suggest_revisions: bool = False,
+    latency_budget_ms: int | None = None,
 ) -> VerificationResult:
     """Async version of verify().
 
@@ -236,12 +288,29 @@ async def verify_async(
     # --- Lexical overlap scoring ---
     overlap_results = [best_overlap_score(s, chunk_texts) for s in sentences]
 
-    # --- Optional LLM-as-judge scoring ---
+    # --- Optional LLM-as-judge scoring with latency budget ---
     llm_scores: list[float | None] = [None] * len(sentences)
-    if use_llm_judge and llm_client is not None:
+    budget_exceeded = False
+    llm_judge_avg_ms = 2000.0
+
+    should_use_llm = use_llm_judge and llm_client is not None
+    if latency_budget_ms is not None and latency_budget_ms <= 100:
+        should_use_llm = False
+
+    if should_use_llm and latency_budget_ms is not None and latency_budget_ms > 100:
+        elapsed_so_far = (time.time() - start_time) * 1000
+        remaining_budget = latency_budget_ms - elapsed_so_far
+
+        if remaining_budget < llm_judge_avg_ms:
+            should_use_llm = False
+            budget_exceeded = True
+
+    if should_use_llm:
         combined_context = " ".join(chunk_texts)
+        judge_start = time.time()
         judge_results = batch_judge_sentences(sentences, combined_context, question, llm_client)
         llm_scores = [score for score, _ in judge_results]
+        llm_judge_avg_ms = (time.time() - judge_start) * 1000 / len(sentences) if sentences else 2000.0
 
     # --- Build per-sentence results ---
     sentence_scores: list[SentenceScore] = []
@@ -287,6 +356,17 @@ async def verify_async(
 
     latency_ms = (time.time() - start_time) * 1000
 
+    metadata_dict: dict[str, Any] = {
+        "nli_model": nli_model,
+        "num_chunks": len(chunks),
+        "num_sentences": len(sentences),
+        "latency_ms": round(latency_ms, 1),
+        "llm_judge_used": should_use_llm,
+        "revisions_suggested": suggest_revisions and llm_client is not None,
+    }
+    if latency_budget_ms is not None:
+        metadata_dict["budget_exceeded"] = budget_exceeded
+
     return VerificationResult(
         question=question,
         answer=answer,
@@ -295,14 +375,7 @@ async def verify_async(
         unsupported=unsupported,
         supported=supported,
         verification_passed=passed,
-        metadata={
-            "nli_model": nli_model,
-            "num_chunks": len(chunks),
-            "num_sentences": len(sentences),
-            "latency_ms": round(latency_ms, 1),
-            "llm_judge_used": use_llm_judge and llm_client is not None,
-            "revisions_suggested": suggest_revisions and llm_client is not None,
-        },
+        metadata=metadata_dict,
     )
 
 
