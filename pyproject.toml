@@ -23,12 +23,15 @@ dependencies = [
     "pydantic>=2.9.0",
     "structlog>=24.0.0",
     "nltk>=3.8.0",
+    # The NLI cross-encoder is the core of the library, so ship it by default —
+    # `pip install athena-verify` should run verify() with no extra steps.
+    "sentence-transformers>=3.0.0",
 ]
 
 [project.optional-dependencies]
-nli = [
-    "sentence-transformers>=3.0.0",
-]
+# Retained for backwards compatibility; sentence-transformers is now a core
+# dependency, so `athena-verify[nli]` resolves to the base install.
+nli = []
 llm = [
     "openai>=1.0.0",
     "anthropic>=0.30.0",
