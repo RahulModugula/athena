@@ -9,7 +9,6 @@ import pytest
 from athena_verify import verify
 from athena_verify.models import SupportingSpan
 
-
 CHUNK_0 = "The sky is blue during the day."
 CHUNK_1 = "Photosynthesis occurs in plant cells."
 

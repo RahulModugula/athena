@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from athena_verify import nli as nli_module
 from athena_verify.nli import (
     NLI_MODEL_ALIASES,
     batch_compute_entailment,
@@ -69,8 +70,23 @@ class MockCrossEncoder:
 
 @pytest.fixture
 def mock_model_cache():
-    with patch("athena_verify.nli._nli_cache", {}) as cache:
-        yield cache
+    """Swap the cached model loader for a controllable dict of mock models.
+
+    get_nli_model and entailment_index are both @lru_cache'd, so clear them
+    around the patch to keep tests isolated.
+    """
+    nli_module.get_nli_model.cache_clear()
+    nli_module.entailment_index.cache_clear()
+    models: dict[str, object] = {}
+
+    def fake_get_model(model_name: str = "cross-encoder/nli-deberta-v3-base"):
+        return models.get(resolve_nli_model(model_name)) or models.get(model_name)
+
+    with patch("athena_verify.nli.get_nli_model", side_effect=fake_get_model):
+        yield models
+
+    nli_module.get_nli_model.cache_clear()
+    nli_module.entailment_index.cache_clear()
 
 
 @pytest.fixture

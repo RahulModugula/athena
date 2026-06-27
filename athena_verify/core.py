@@ -7,6 +7,7 @@ in the provided context chunks.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from collections.abc import AsyncIterator
@@ -28,11 +29,150 @@ from athena_verify.models import (
     SupportingSpan,
     VerificationResult,
 )
-from athena_verify.nli import batch_compute_entailment, batch_compute_entailment_async
+from athena_verify.nli import batch_compute_entailment
 from athena_verify.overlap import best_overlap_score
 from athena_verify.parser import sentence_buffer, split_sentences
 
 logger = structlog.get_logger()
+
+# Span-level entailment threshold: a context unit must clear this to be
+# reported as a supporting span for a sentence.
+_SPAN_ENTAILMENT_THRESHOLD = 0.5
+
+# Return shape of _ground_sentences: (nli_scores, per-sentence span-unit scores,
+# span unit texts, span unit (chunk_idx, start, end) locations).
+_GroundResult = tuple[list[float], list[list[float]], list[str], list[tuple[int, int, int]]]
+
+# Leading tokens that signal a sentence depends on its predecessor for meaning
+# (anaphora / discourse continuation). When an answer sentence starts with one
+# of these, NLI scored on the sentence in isolation collapses to ~0 even when
+# the claim is fully grounded, because the referent ("it", "this cap") is gone.
+# We prepend the previous sentence to restore the antecedent before scoring.
+_ANAPHORA_TOKENS = frozenset(
+    {
+        "it",
+        "its",
+        "it's",
+        "this",
+        "that",
+        "these",
+        "those",
+        "they",
+        "them",
+        "their",
+        "theirs",
+        "he",
+        "she",
+        "his",
+        "her",
+        "hers",
+        "such",
+        "also",
+        "additionally",
+        "moreover",
+        "furthermore",
+        "however",
+        "therefore",
+        "thus",
+        "then",
+        "there",
+        "both",
+        "neither",
+        "either",
+    }
+)
+
+
+def _starts_with_anaphor(sentence: str) -> bool:
+    """True if a sentence opens with a pronoun/discourse marker needing context."""
+    stripped = sentence.strip()
+    if not stripped:
+        return False
+    first = stripped.split(maxsplit=1)[0].lower().strip(",.;:\"'()")
+    return first in _ANAPHORA_TOKENS
+
+
+def _build_context_units(
+    chunk_texts: list[str],
+) -> tuple[list[str], list[tuple[int, int, int]], list[bool]]:
+    """Expand context chunks into NLI premise candidates.
+
+    Returns parallel lists of:
+      - unit text,
+      - (chunk_idx, char_start, char_end) location into the original chunk,
+      - is_span_unit flag (True for sentence-level units usable as precise
+        supporting spans, False for whole-chunk fallback premises).
+
+    Each chunk contributes its individual sentences (focused premises that
+    avoid the long-premise "neutral" bias) plus, when it has more than one
+    sentence, the full chunk text (so facts spread across several sentences
+    are still entailed). NLI takes the max over all candidates, so adding the
+    whole-chunk premise can only raise a faithful sentence's score.
+    """
+    units: list[str] = []
+    locations: list[tuple[int, int, int]] = []
+    is_span_unit: list[bool] = []
+    for chunk_idx, chunk in enumerate(chunk_texts):
+        sub = split_sentences(chunk) or [chunk]
+        for unit in sub:
+            char_start = chunk.find(unit)
+            if char_start == -1:
+                char_start = 0
+            units.append(unit)
+            locations.append((chunk_idx, char_start, char_start + len(unit)))
+            is_span_unit.append(True)
+        if len(sub) > 1:
+            units.append(chunk)
+            locations.append((chunk_idx, 0, len(chunk)))
+            is_span_unit.append(False)
+    return units, locations, is_span_unit
+
+
+def _ground_sentences(
+    sentences: list[str],
+    chunk_texts: list[str],
+    nli_model: str,
+) -> tuple[list[float], list[list[float]], list[str], list[tuple[int, int, int]]]:
+    """Score how well each answer sentence is grounded in the context.
+
+    Splits context into focused premise candidates, applies anaphora windowing
+    to each hypothesis, and returns:
+      - nli_scores: best entailment per sentence over all premise candidates,
+      - span_scores: per-sentence entailment over the span-eligible units only,
+      - span_units / span_locations: the span-eligible units these align to.
+    """
+    units, locations, is_span_unit = _build_context_units(chunk_texts)
+    span_units = [u for u, keep in zip(units, is_span_unit, strict=True) if keep]
+    span_locations = [
+        loc for loc, keep in zip(locations, is_span_unit, strict=True) if keep
+    ]
+
+    if not units or not sentences:
+        empty_spans: list[list[float]] = [[] for _ in sentences]
+        return [0.0] * len(sentences), empty_spans, span_units, span_locations
+
+    # Anaphora windowing: prepend the previous sentence when the current one
+    # opens with a referent, so the NLI hypothesis carries its antecedent.
+    hypotheses: list[str] = []
+    for i, sentence in enumerate(sentences):
+        if i > 0 and _starts_with_anaphor(sentence):
+            hypotheses.append(f"{sentences[i - 1]} {sentence}")
+        else:
+            hypotheses.append(sentence)
+
+    nli_pairs = [(unit, hyp) for hyp in hypotheses for unit in units]
+    flat = batch_compute_entailment(nli_pairs, model_name=nli_model)
+
+    nli_scores: list[float] = []
+    span_scores: list[list[float]] = []
+    n_units = len(units)
+    for i in range(len(sentences)):
+        unit_scores = flat[i * n_units : (i + 1) * n_units]
+        nli_scores.append(max(unit_scores) if unit_scores else 0.0)
+        span_scores.append(
+            [s for s, keep in zip(unit_scores, is_span_unit, strict=True) if keep]
+        )
+    return nli_scores, span_scores, span_units, span_locations
 
 
 def verify_step(
@@ -134,42 +274,14 @@ def verify(
         )
 
     # --- NLI scoring ---
-    # NLI models work best with short, focused premises. When a context chunk
-    # contains multiple sentences of info, the model classifies entailed
-    # hypotheses as "neutral" because the premise has information BEYOND the
-    # hypothesis. Fix: split chunks into individual sentences for NLI scoring.
-    _SPAN_ENTAILMENT_THRESHOLD = 0.5
-
-    context_units: list[str] = []
-    # (chunk_idx, char_start, char_end) into the original chunk text
-    unit_locations: list[tuple[int, int, int]] = []
-    for chunk_idx, chunk in enumerate(chunk_texts):
-        sub = split_sentences(chunk)
-        if not sub:
-            sub = [chunk]
-        for unit in sub:
-            char_start = chunk.find(unit)
-            if char_start == -1:
-                char_start = 0
-            context_units.append(unit)
-            unit_locations.append((chunk_idx, char_start, char_start + len(unit)))
-
-    nli_pairs = [(unit, sentence) for sentence in sentences for unit in context_units]
-    nli_scores_flat = batch_compute_entailment(nli_pairs, model_name=nli_model)
-    nli_scores: list[float] = []
-    nli_best_chunks: list[str | None] = []
-    per_sentence_unit_scores: list[list[float]] = []
-    for i in range(len(sentences)):
-        start = i * len(context_units)
-        unit_scores = nli_scores_flat[start : start + len(context_units)]
-        per_sentence_unit_scores.append(unit_scores)
-        if unit_scores:
-            best_idx = unit_scores.index(max(unit_scores))
-            nli_scores.append(unit_scores[best_idx])
-            nli_best_chunks.append(context_units[best_idx])
-        else:
-            nli_scores.append(0.0)
-            nli_best_chunks.append(None)
+    # NLI works best on short, focused premises with hypotheses that carry
+    # their own referents. _ground_sentences handles both: it scores each
+    # sentence against individual context sentences plus the whole chunk
+    # (max wins), and prepends the prior sentence when a hypothesis opens with
+    # an anaphor. See athena_verify.core helpers for details.
+    nli_scores, per_sentence_unit_scores, span_units, span_locations = _ground_sentences(
+        sentences, chunk_texts, nli_model
+    )
 
     # --- Lexical overlap scoring ---
     overlap_results = [best_overlap_score(s, chunk_texts) for s in sentences]
@@ -196,7 +308,9 @@ def verify(
         judge_start = time.time()
         judge_results = batch_judge_sentences(sentences, combined_context, question, llm_client)
         llm_scores = [score for score, _ in judge_results]
-        llm_judge_avg_ms = (time.time() - judge_start) * 1000 / len(sentences) if sentences else 2000.0
+        llm_judge_avg_ms = (
+            (time.time() - judge_start) * 1000 / len(sentences) if sentences else 2000.0
+        )
 
     # --- Build per-sentence results ---
     sentence_scores: list[SentenceScore] = []
@@ -211,10 +325,10 @@ def verify(
         unit_scores_i = per_sentence_unit_scores[i] if i < len(per_sentence_unit_scores) else []
         supporting_spans = [
             SupportingSpan(
-                chunk_idx=unit_locations[j][0],
-                start=unit_locations[j][1],
-                end=unit_locations[j][2],
-                text=context_units[j],
+                chunk_idx=span_locations[j][0],
+                start=span_locations[j][1],
+                end=span_locations[j][2],
+                text=span_units[j],
             )
             for j, score in enumerate(unit_scores_i)
             if score >= _SPAN_ENTAILMENT_THRESHOLD
@@ -335,8 +449,13 @@ async def verify_async(
         )
 
     # --- NLI scoring (async) ---
-    nli_pairs = [(" ".join(chunk_texts), sentence) for sentence in sentences]
-    nli_scores = await batch_compute_entailment_async(nli_pairs, model_name=nli_model)
+    # Offload the same grounding logic used by verify() to a thread so we get
+    # per-unit + whole-chunk premises and anaphora windowing here too, instead
+    # of the old concatenate-all-chunks premise that silently truncated at the
+    # model's token limit.
+    nli_scores, per_sentence_unit_scores, span_units, span_locations = await asyncio.to_thread(
+        _ground_sentences, sentences, chunk_texts, nli_model
+    )
 
     # --- Lexical overlap scoring ---
     overlap_results = [best_overlap_score(s, chunk_texts) for s in sentences]
@@ -363,7 +482,9 @@ async def verify_async(
         judge_start = time.time()
         judge_results = batch_judge_sentences(sentences, combined_context, question, llm_client)
         llm_scores = [score for score, _ in judge_results]
-        llm_judge_avg_ms = (time.time() - judge_start) * 1000 / len(sentences) if sentences else 2000.0
+        llm_judge_avg_ms = (
+            (time.time() - judge_start) * 1000 / len(sentences) if sentences else 2000.0
+        )
 
     # --- Build per-sentence results ---
     sentence_scores: list[SentenceScore] = []
@@ -375,6 +496,18 @@ async def verify_async(
         trust = compute_trust_score(nli, overlap, llm, weights)
         status = classify_support(trust)
 
+        unit_scores_i = per_sentence_unit_scores[i] if i < len(per_sentence_unit_scores) else []
+        supporting_spans = [
+            SupportingSpan(
+                chunk_idx=span_locations[j][0],
+                start=span_locations[j][1],
+                end=span_locations[j][2],
+                text=span_units[j],
+            )
+            for j, score in enumerate(unit_scores_i)
+            if score >= _SPAN_ENTAILMENT_THRESHOLD
+        ]
+
         sentence_scores.append(
             SentenceScore(
                 text=sentence,
@@ -385,6 +518,7 @@ async def verify_async(
                 trust_score=trust,
                 support_status=status,
                 best_matching_context=best_chunk,
+                supporting_spans=supporting_spans,
             )
         )
 
@@ -502,27 +636,12 @@ def verify_batch(
 
     all_chunks: list[list[Chunk]] = []
     all_sentences: list[list[str]] = []
-    all_nli_pairs: list[tuple[str, str]] = []
-    pair_offsets: list[int] = []
 
     for q_idx in range(len(questions_list)):
         chunks = [Chunk.from_input(c) for c in contexts_list[q_idx]]
-        chunk_texts = [c.content for c in chunks]
-        combined_context = " ".join(chunk_texts)
         sentences = split_sentences(answers_list[q_idx])
-
         all_chunks.append(chunks)
         all_sentences.append(sentences)
-
-        offset = len(all_nli_pairs)
-        pair_offsets.append(offset)
-
-        for sentence in sentences:
-            all_nli_pairs.append((combined_context, sentence))
-
-    nli_scores_all = batch_compute_entailment(
-        all_nli_pairs, model_name=nli_model, batch_size=batch_size
-    )
 
     for q_idx in range(len(questions_list)):
         chunks = all_chunks[q_idx]
@@ -544,7 +663,9 @@ def verify_batch(
             )
             continue
 
-        offset = pair_offsets[q_idx]
+        nli_scores, per_sentence_unit_scores, span_units, span_locations = _ground_sentences(
+            sentences, chunk_texts, nli_model
+        )
         sentence_scores: list[SentenceScore] = []
         llm_scores: list[float | None] = [None] * len(sentences)
 
@@ -556,12 +677,24 @@ def verify_batch(
             llm_scores = [score for score, _ in judge_results]
 
         for i, sentence in enumerate(sentences):
-            nli = nli_scores_all[offset + i] if (offset + i) < len(nli_scores_all) else 0.0
+            nli = nli_scores[i] if i < len(nli_scores) else 0.0
             overlap, best_chunk = best_overlap_score(sentence, chunk_texts)
             llm = llm_scores[i] if i < len(llm_scores) else None
 
             trust = compute_trust_score(nli, overlap, llm, weights)
             status = classify_support(trust)
+
+            unit_scores_i = per_sentence_unit_scores[i] if i < len(per_sentence_unit_scores) else []
+            supporting_spans = [
+                SupportingSpan(
+                    chunk_idx=span_locations[j][0],
+                    start=span_locations[j][1],
+                    end=span_locations[j][2],
+                    text=span_units[j],
+                )
+                for j, score in enumerate(unit_scores_i)
+                if score >= _SPAN_ENTAILMENT_THRESHOLD
+            ]
 
             sentence_scores.append(
                 SentenceScore(
@@ -573,6 +706,7 @@ def verify_batch(
                     trust_score=trust,
                     support_status=status,
                     best_matching_context=best_chunk,
+                    supporting_spans=supporting_spans,
                 )
             )
 
@@ -666,27 +800,27 @@ async def verify_batch_async(
 
     all_chunks: list[list[Chunk]] = []
     all_sentences: list[list[str]] = []
-    all_nli_pairs: list[tuple[str, str]] = []
-    pair_offsets: list[int] = []
 
     for q_idx in range(len(questions_list)):
         chunks = [Chunk.from_input(c) for c in contexts_list[q_idx]]
-        chunk_texts = [c.content for c in chunks]
-        combined_context = " ".join(chunk_texts)
         sentences = split_sentences(answers_list[q_idx])
-
         all_chunks.append(chunks)
         all_sentences.append(sentences)
 
-        offset = len(all_nli_pairs)
-        pair_offsets.append(offset)
+    # Ground every question with the shared per-unit + windowing logic, offloaded
+    # to a single worker thread so we don't block the event loop.
+    def _ground_all() -> list[_GroundResult]:
+        out: list[_GroundResult] = []
+        for q_idx in range(len(questions_list)):
+            sents = all_sentences[q_idx]
+            if not sents:
+                out.append(([], [], [], []))
+                continue
+            texts = [c.content for c in all_chunks[q_idx]]
+            out.append(_ground_sentences(sents, texts, nli_model))
+        return out
 
-        for sentence in sentences:
-            all_nli_pairs.append((combined_context, sentence))
-
-    nli_scores_all = await batch_compute_entailment_async(
-        all_nli_pairs, model_name=nli_model, batch_size=batch_size
-    )
+    grounding = await asyncio.to_thread(_ground_all)
 
     for q_idx in range(len(questions_list)):
         try:
@@ -709,7 +843,7 @@ async def verify_batch_async(
                 )
                 continue
 
-            offset = pair_offsets[q_idx]
+            nli_scores, per_sentence_unit_scores, span_units, span_locations = grounding[q_idx]
             sentence_scores: list[SentenceScore] = []
             llm_scores: list[float | None] = [None] * len(sentences)
 
@@ -721,12 +855,26 @@ async def verify_batch_async(
                 llm_scores = [score for score, _ in judge_results]
 
             for i, sentence in enumerate(sentences):
-                nli = nli_scores_all[offset + i] if (offset + i) < len(nli_scores_all) else 0.0
+                nli = nli_scores[i] if i < len(nli_scores) else 0.0
                 overlap, best_chunk = best_overlap_score(sentence, chunk_texts)
                 llm = llm_scores[i] if i < len(llm_scores) else None
 
                 trust = compute_trust_score(nli, overlap, llm, weights)
                 status = classify_support(trust)
+
+                unit_scores_i = (
+                    per_sentence_unit_scores[i] if i < len(per_sentence_unit_scores) else []
+                )
+                supporting_spans = [
+                    SupportingSpan(
+                        chunk_idx=span_locations[j][0],
+                        start=span_locations[j][1],
+                        end=span_locations[j][2],
+                        text=span_units[j],
+                    )
+                    for j, score in enumerate(unit_scores_i)
+                    if score >= _SPAN_ENTAILMENT_THRESHOLD
+                ]
 
                 sentence_scores.append(
                     SentenceScore(
@@ -738,6 +886,7 @@ async def verify_batch_async(
                         trust_score=trust,
                         support_status=status,
                         best_matching_context=best_chunk,
+                        supporting_spans=supporting_spans,
                     )
                 )
 
@@ -897,19 +1046,41 @@ async def verify_stream(
 
     chunks = [Chunk.from_input(c) for c in context]
     chunk_texts = [c.content for c in chunks]
-    combined_context = " ".join(chunk_texts)
 
     sentence_scores: list[SentenceScore] = []
     idx = 0
 
     async for sentence in sentence_buffer(answer_stream):
-        nli_pairs = [(combined_context, sentence)]
-        nli_scores = await batch_compute_entailment_async(nli_pairs, model_name=nli_model)
-        nli = nli_scores[0] if nli_scores else 0.0
+        # Ground each completed sentence with the same per-unit + whole-chunk
+        # premises as verify(). When the sentence opens with an anaphor, include
+        # the previous one so the referent is present, then keep the current
+        # sentence's score (the last entry).
+        prev_text = sentence_scores[-1].text if sentence_scores else None
+        if prev_text and _starts_with_anaphor(sentence):
+            ground_input = [prev_text, sentence]
+        else:
+            ground_input = [sentence]
+
+        nli_scores, span_scores, span_units, span_locations = await asyncio.to_thread(
+            _ground_sentences, ground_input, chunk_texts, nli_model
+        )
+        nli = nli_scores[-1] if nli_scores else 0.0
+        unit_scores_i = span_scores[-1] if span_scores else []
 
         overlap, best_chunk = best_overlap_score(sentence, chunk_texts)
         trust = compute_trust_score(nli, overlap, None, weights)
         status = classify_support(trust)
+
+        supporting_spans = [
+            SupportingSpan(
+                chunk_idx=span_locations[j][0],
+                start=span_locations[j][1],
+                end=span_locations[j][2],
+                text=span_units[j],
+            )
+            for j, score in enumerate(unit_scores_i)
+            if score >= _SPAN_ENTAILMENT_THRESHOLD
+        ]
 
         score = SentenceScore(
             text=sentence,
@@ -919,6 +1090,7 @@ async def verify_stream(
             trust_score=trust,
             support_status=status,
             best_matching_context=best_chunk,
+            supporting_spans=supporting_spans,
         )
         sentence_scores.append(score)
         idx += 1
