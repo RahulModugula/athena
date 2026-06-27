@@ -92,23 +92,35 @@ number that actually matters for clean text.
 |----------|-----------|--------|--------|
 | **Fabricated claims** | 100% | 96% | **97.9%** ✓ |
 | **Out-of-context** | 100% | 97% | **98.3%** ✓ |
-| **Subtle contradictions** | 100% | 100% | **100%** ✓ |
-| **Partial support** | 88% | 96% | **91.3%** |
+| **Subtle contradictions** | 100% | 97% | **98.3%** ✓ |
+| **Partial support** | 95% | 91% | **93.0%** |
 | **Number substitutions** | 82% | 96% | **88.5%** |
-| **Overall** | 91% | 97% | **93.6%** (synthetic) |
+| **Overall** | 95% | 96% | **95.0%** (synthetic) |
 
-**False-positive rate on faithful text: 11.5%** (10 of 87 genuinely-supported
-sentences flagged). Latency: **p50 23.5 ms, p95 36.2 ms** per verification on the
+**False-positive rate on faithful text: 4.6%** (4 of 87 genuinely-supported
+sentences flagged) on the base model, **3.4%** on the large model — down from 17%
+before calibration. Latency: **p50 22.5 ms, p95 34.5 ms** per verification on the
 base model. Numbers are reproducible with `python benchmarks/run_full_eval.py`.
 
-### Where We Lose
+### How false positives are kept low
 
-The remaining 11.5% of false positives are concentrated in number-heavy and
-heavily-paraphrased faithful sentences (e.g. "approximately 1200 SEK per tonne"),
-where standalone NLI is weak. For those, enable the optional LLM-judge
-escalation (`use_llm_judge=True`) — it is exactly the borderline case the judge
-exists to catch. Conservative thresholds still bias toward catching
-hallucinations over passing every clean sentence, so treat athena as a guardrail.
+Standalone NLI scores many faithful paraphrases as "neutral" (entailment ≈ 0)
+even when the claim is fully supported. Athena recovers these without letting
+hallucinations through, using three guarded signals:
+
+- **Anaphora windowing** — a sentence opening with a referent ("This cap…", "It
+  also…") is scored together with its predecessor, restoring the antecedent.
+- **Contradiction-aware rescue** — a not-entailed claim is only rescued when the
+  most on-topic context unit does *not* contradict it, so reversals and subtle
+  contradictions stay flagged.
+- **Numeric gate** — rescue requires every number in the claim to appear in the
+  context, so number-substitution hallucinations ("$5M" vs a "$2M" context) are
+  never rescued.
+
+The remaining false positives are heavily-paraphrased claims with little lexical
+overlap (e.g. "olive oil is drizzled on top"); enable the optional LLM-judge
+escalation (`use_llm_judge=True`) for those. Athena still biases toward catching
+hallucinations over passing every clean sentence — treat it as a guardrail.
 
 **LettuceDetect beats athena on span-level F1** on real-world benchmarks (LettuceDetect 79.2% F1 on annotated spans vs. athena's unvalidated real-world score). Athena wins on latency bounds, provider-neutrality, offline execution, and the spans-in-library integration story — not raw F1.
 

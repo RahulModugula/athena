@@ -46,11 +46,11 @@ class MockCrossEncoder:
 @pytest.fixture(autouse=True)
 def _mock_nli():
     # _ground_sentences scores one pair per (context unit, sentence); return a
-    # constant entailment for each so multi-sentence answers score uniformly.
-    def fake_entailment(pairs, *args, **kwargs):
-        return [0.85] * len(pairs)
+    # constant (entailment, contradiction) for each so answers score uniformly.
+    def fake_nli(pairs, *args, **kwargs):
+        return [(0.85, 0.05)] * len(pairs)
 
-    with patch("athena_verify.core.batch_compute_entailment", side_effect=fake_entailment):
+    with patch("athena_verify.core.batch_compute_nli", side_effect=fake_nli):
         yield
 
 

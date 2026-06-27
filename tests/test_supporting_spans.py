@@ -15,12 +15,14 @@ CHUNK_1 = "Photosynthesis occurs in plant cells."
 # 2 context units (one per chunk), 2 sentences in answer → 4 NLI pairs:
 #   (unit0, sent0), (unit1, sent0), (unit0, sent1), (unit1, sent1)
 # Scores: sent0 supported by unit0 (chunk 0), sent1 supported by unit1 (chunk 1).
-_NLI_SCORES = [0.9, 0.1, 0.1, 0.85]
+# Each is (entailment, contradiction); contradiction is 0 so the rescue rule
+# is irrelevant to span assignment here.
+_NLI_SCORES = [(0.9, 0.0), (0.1, 0.0), (0.1, 0.0), (0.85, 0.0)]
 
 
 @pytest.fixture()
 def _mock_nli():
-    with patch("athena_verify.core.batch_compute_entailment", return_value=_NLI_SCORES):
+    with patch("athena_verify.core.batch_compute_nli", return_value=_NLI_SCORES):
         yield
 
 
@@ -89,7 +91,10 @@ class TestSupportingSpans:
 
     def test_no_spans_below_threshold(self):
         # All NLI scores are 0.1 — below the 0.5 threshold, so no spans.
-        with patch("athena_verify.core.batch_compute_entailment", return_value=[0.1, 0.1, 0.1, 0.1]):
+        with patch(
+            "athena_verify.core.batch_compute_nli",
+            return_value=[(0.1, 0.0), (0.1, 0.0), (0.1, 0.0), (0.1, 0.0)],
+        ):
             result = verify(
                 question="What color is the sky?",
                 answer="The sky appears blue. Photosynthesis happens in plants.",

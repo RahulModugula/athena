@@ -86,6 +86,36 @@ def entailment_index(model_name: str) -> int | None:
     return None
 
 
+@lru_cache(maxsize=32)
+def contradiction_index(model_name: str) -> int | None:
+    """Resolve the contradiction class index from the model's label map.
+
+    Mirrors :func:`entailment_index`. Used to tell a real contradiction
+    ("the cap is $5M" vs context "$2M") apart from a merely neutral / not-
+    directly-stated paraphrase, so the two can be handled differently.
+    """
+    model = get_nli_model(model_name)
+    config = getattr(getattr(model, "model", None), "config", None) or getattr(
+        model, "config", None
+    )
+    id2label = getattr(config, "id2label", None)
+    if not isinstance(id2label, dict):
+        return None
+    for idx, label in id2label.items():
+        if "contradict" in str(label).lower():
+            return int(idx)
+    return None
+
+
+def _softmax(logits: Any) -> list[float]:
+    """Numerically stable softmax over a logit row."""
+    row = list(logits)
+    max_val = max(row)
+    exp_vals = [math.exp(v - max_val) for v in row]
+    total = sum(exp_vals)
+    return [v / total for v in exp_vals]
+
+
 def _softmax_entailment(logits: Any, entail_idx: int) -> float:
     """Convert NLI logits to entailment probability via softmax.
 
@@ -93,12 +123,9 @@ def _softmax_entailment(logits: Any, entail_idx: int) -> float:
         logits: Per-class logits for one premise/hypothesis pair.
         entail_idx: Index of the entailment class for this model.
     """
-    row = list(logits)
-    max_val = max(row)
-    exp_vals = [math.exp(v - max_val) for v in row]
-    total = sum(exp_vals)
-    idx = entail_idx if 0 <= entail_idx < len(row) else 1
-    return exp_vals[idx] / total
+    probs = _softmax(logits)
+    idx = entail_idx if 0 <= entail_idx < len(probs) else 1
+    return probs[idx]
 
 
 def compute_entailment_score(
@@ -126,12 +153,58 @@ def compute_entailment_score(
     return float(row) if not hasattr(row, "__len__") else float(row[0])
 
 
+def batch_compute_nli(
+    pairs: list[tuple[str, str]],
+    model_name: str = "cross-encoder/nli-deberta-v3-base",
+    batch_size: int = 32,
+) -> list[tuple[float, float]]:
+    """Batch compute (entailment, contradiction) probabilities per pair.
+
+    Returns a list of ``(entailment_prob, contradiction_prob)`` tuples. For
+    single-logit consistency models (e.g. HHEM) the contradiction probability
+    is taken as ``1 - entailment``.
+
+    Args:
+        pairs: List of (premise, hypothesis) tuples.
+        model_name: Cross-encoder model to use (or alias like "lightweight").
+        batch_size: Number of pairs to process at once.
+    """
+    if not pairs:
+        return []
+
+    model = get_nli_model(model_name)
+    e_idx = entailment_index(model_name)
+    c_idx = contradiction_index(model_name)
+    entail_idx = e_idx if e_idx is not None else 1
+    contra_idx = c_idx if c_idx is not None else 0
+    results: list[tuple[float, float]] = []
+
+    for start in range(0, len(pairs), batch_size):
+        batch = pairs[start : start + batch_size]
+        scores = model.predict(batch)
+
+        for score_row in scores:
+            if hasattr(score_row, "__len__") and len(score_row) >= 3:
+                probs = _softmax(score_row)
+                entail = probs[entail_idx] if 0 <= entail_idx < len(probs) else probs[1]
+                contra = probs[contra_idx] if 0 <= contra_idx < len(probs) else probs[0]
+                results.append((entail, contra))
+            else:
+                entail = float(score_row)
+                results.append((entail, 1.0 - entail))
+
+    return results
+
+
 def batch_compute_entailment(
     pairs: list[tuple[str, str]],
     model_name: str = "cross-encoder/nli-deberta-v3-base",
     batch_size: int = 32,
 ) -> list[float]:
     """Batch compute entailment scores for multiple premise-hypothesis pairs.
+
+    Thin wrapper over :func:`batch_compute_nli` that returns only the
+    entailment probabilities.
 
     Args:
         pairs: List of (premise, hypothesis) tuples.
@@ -141,25 +214,7 @@ def batch_compute_entailment(
     Returns:
         List of entailment probabilities.
     """
-    if not pairs:
-        return []
-
-    model = get_nli_model(model_name)
-    entail_idx = entailment_index(model_name)
-    fallback_idx = entail_idx if entail_idx is not None else 1
-    results: list[float] = []
-
-    for start in range(0, len(pairs), batch_size):
-        batch = pairs[start : start + batch_size]
-        scores = model.predict(batch)
-
-        for score_row in scores:
-            if hasattr(score_row, "__len__") and len(score_row) >= 3:
-                results.append(_softmax_entailment(score_row, fallback_idx))
-            else:
-                results.append(float(score_row))
-
-    return results
+    return [entail for entail, _ in batch_compute_nli(pairs, model_name, batch_size)]
 
 
 async def batch_compute_entailment_async(
