@@ -81,21 +81,34 @@ pip install "athena-verify[all]"
 
 Evaluated on 100 synthetic cases across 6 hallucination categories (legal, medical, technical, general). Real-world benchmarks against RAGTruth and HaluEval are in progress — download instructions are in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md).
 
-### Per-Category Performance (NLI-only, synthetic, nli-deberta-v3-base)
+### Hallucination Detection (NLI-only, synthetic, nli-deberta-v3-base)
+
+Each row is the per-category F1 for *catching hallucinations*. The faithful-text
+row is intentionally excluded here — it contains no hallucinations, so its F1 is
+undefined; we report its false-positive rate separately below, which is the
+number that actually matters for clean text.
 
 | Category | Precision | Recall | **F1** |
 |----------|-----------|--------|--------|
-| **Fabricated claims** | 100% | 97% | **98.6%** ✓ |
+| **Fabricated claims** | 100% | 96% | **97.9%** ✓ |
 | **Out-of-context** | 100% | 97% | **98.3%** ✓ |
-| **Subtle contradictions** | 100% | 97% | **98.3%** ✓ |
-| **Number substitutions** | 79% | 96% | **86.8%** |
-| **Partial support** | 78% | 95% | **85.7%** |
-| **Faithful statements** | 0% | 0% | **0.0%** ✗ |
-| **Overall** | 87% | 97% | **91.3%** (synthetic) |
+| **Subtle contradictions** | 100% | 100% | **100%** ✓ |
+| **Partial support** | 88% | 96% | **91.3%** |
+| **Number substitutions** | 82% | 96% | **88.5%** |
+| **Overall** | 91% | 97% | **93.6%** (synthetic) |
+
+**False-positive rate on faithful text: 11.5%** (10 of 87 genuinely-supported
+sentences flagged). Latency: **p50 23.5 ms, p95 36.2 ms** per verification on the
+base model. Numbers are reproducible with `python benchmarks/run_full_eval.py`.
 
 ### Where We Lose
 
-Athena has a **high false positive rate on truly faithful statements** (31% of genuinely faithful sentences are incorrectly flagged). This is a known NLI-model limitation — conservative thresholds bias toward catching hallucinations at the cost of flagging clean sentences.
+The remaining 11.5% of false positives are concentrated in number-heavy and
+heavily-paraphrased faithful sentences (e.g. "approximately 1200 SEK per tonne"),
+where standalone NLI is weak. For those, enable the optional LLM-judge
+escalation (`use_llm_judge=True`) — it is exactly the borderline case the judge
+exists to catch. Conservative thresholds still bias toward catching
+hallucinations over passing every clean sentence, so treat athena as a guardrail.
 
 **LettuceDetect beats athena on span-level F1** on real-world benchmarks (LettuceDetect 79.2% F1 on annotated spans vs. athena's unvalidated real-world score). Athena wins on latency bounds, provider-neutrality, offline execution, and the spans-in-library integration story — not raw F1.
 
