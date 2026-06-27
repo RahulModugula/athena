@@ -24,6 +24,25 @@ No document ingestion. No chunking. No agents. No database. Works identically on
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 ![Version](https://img.shields.io/badge/version-0.1.0-orange)
 
+## Stop hallucinations before they cascade
+
+In a multi-step agent, each step's output feeds the next — a single fabricated
+figure propagates straight into the final answer. `verify_step()` is a circuit
+breaker that halts the chain the moment a claim stops being grounded in the
+evidence:
+
+![Agent circuit-breaker demo](assets/circuit_breaker.gif)
+
+```python
+from athena_verify import verify_step
+
+step = verify_step(claim=reasoning_step, evidence=retrieved_chunks, threshold=0.5)
+if step.action == "halt":
+    raise RuntimeError(f"Ungrounded claim blocked (trust={step.trust_score:.2f})")
+```
+
+Run it yourself: [`examples/agent_circuit_breaker.py`](examples/agent_circuit_breaker.py).
+
 ## How It Works
 
 ```

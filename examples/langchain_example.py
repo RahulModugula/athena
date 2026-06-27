@@ -9,9 +9,9 @@ Prerequisites:
 Run with: python examples/langchain_example.py
 """
 
-from langchain_core.documents import Document
-from langchain.retrievers import BaseRetriever
 from langchain.chains import RetrievalQA
+from langchain.retrievers import BaseRetriever
+from langchain_core.documents import Document
 from langchain_core.llms.fake import FakeListLLM
 
 from athena_verify.integrations.langchain import VerifyingLLM

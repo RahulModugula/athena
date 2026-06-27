@@ -45,3 +45,5 @@ Thumbs.db
 .claude/
 .odin/
 scratchpad/
+# Recording build artifact (GIF is committed; cast is regenerated)
+assets/*.cast
