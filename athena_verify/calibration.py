@@ -20,6 +20,16 @@ SUPPORTED_THRESHOLD = 0.75
 PARTIAL_THRESHOLD = 0.50
 UNSUPPORTED_THRESHOLD = 0.30
 
+# Grounding-rescue thresholds. Cross-encoder NLI frequently scores a faithful
+# paraphrase as "neutral" (entailment ~0) even though the claim is fully
+# supported. When the claim is *not* contradicted, is heavily lexically
+# grounded, and all its numbers appear in the context, we lift it out of the
+# unsupported band — recovering false positives without passing contradictions
+# or number swaps (which fail the contradiction / numeric guards).
+RESCUE_CONTRADICTION_CEILING = 0.45
+RESCUE_CONTAINMENT_FLOOR = 0.50
+RESCUE_TRUST = 0.55
+
 
 def compute_trust_score(
     nli_score: float,
@@ -55,6 +65,43 @@ def compute_trust_score(
         trust = (w["nli"] * nli_score + w["overlap"] * lexical_overlap) / total_weight
 
     return min(1.0, max(0.0, trust))
+
+
+def apply_grounding_rescue(
+    trust: float,
+    *,
+    entailment: float,
+    contradiction: float,
+    containment: float,
+    numeric_ok: bool,
+) -> float:
+    """Lift trust for neutral-but-grounded paraphrases NLI scores too low.
+
+    Only ever raises the score, and only when all guards pass:
+      - the claim is not contradicted by any context unit,
+      - it is not already strongly entailed (nothing to rescue),
+      - its content words are heavily present in the context, and
+      - every number in it appears in the context.
+
+    Args:
+        trust: The ensemble trust score before rescue.
+        entailment: Max NLI entailment probability for the sentence.
+        contradiction: Max NLI contradiction probability for the sentence.
+        containment: Fraction of content words found in the context.
+        numeric_ok: Whether all numbers in the sentence appear in the context.
+
+    Returns:
+        The (possibly raised) trust score.
+    """
+    if contradiction >= RESCUE_CONTRADICTION_CEILING:
+        return trust
+    if entailment >= SUPPORTED_THRESHOLD:
+        return trust
+    if not numeric_ok:
+        return trust
+    if containment >= RESCUE_CONTAINMENT_FLOOR:
+        return max(trust, RESCUE_TRUST)
+    return trust
 
 
 def classify_support(trust_score: float) -> str:

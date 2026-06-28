@@ -74,11 +74,33 @@ def split_sentences(text: str) -> list[str]:
         return _split_sentences_regex(text)
 
 
-def _split_sentences_regex(text: str) -> list[str]:
-    """Split text into sentences using regex (fallback).
+# Common abbreviations that end in a period but do not end a sentence. Kept
+# lowercase and without the trailing period for matching. Covers titles, legal
+# and academic citation forms, and Latin/measurement shorthands — the domains
+# (legal, medical, technical) athena targets, where a wrong split fragments a
+# claim and shows up as a false positive.
+_ABBREVIATIONS = frozenset(
+    {
+        "dr", "mr", "mrs", "ms", "prof", "rev", "hon", "sr", "jr", "st",
+        "vs", "etc", "al", "cf", "eg", "ie", "ca", "approx",
+        "inc", "ltd", "co", "corp", "llc", "plc",
+        "no", "nos", "fig", "figs", "sec", "secs", "art", "para", "pp", "vol",
+        "ch", "ed", "eds", "rep", "dept", "est", "min", "max",
+        "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept",
+        "oct", "nov", "dec",
+        # multi-dot forms, matched after stripping internal periods
+        "us", "uk", "un", "eu", "am", "pm", "phd", "md", "ba", "ma", "bs",
+    }
+)
 
-    Used when NLTK is not available. Handles common English sentence
-    boundaries but may split incorrectly on abbreviations like "Dr. Smith".
+
+def _split_sentences_regex(text: str) -> list[str]:
+    """Split text into sentences using regex (fallback for when NLTK is absent).
+
+    Abbreviation-aware: a candidate boundary is rejected when the token before
+    the period is a known abbreviation (``Dr.``, ``Inc.``), a single-letter
+    initial, or a dotted acronym (``U.S.``), so claims in legal/medical text
+    aren't fragmented.
 
     Args:
         text: The answer text to split.
@@ -86,18 +108,28 @@ def _split_sentences_regex(text: str) -> list[str]:
     Returns:
         List of non-empty sentence strings.
     """
-    # Normalize whitespace
     text = text.strip()
+    if not text:
+        return []
 
-    # Split on sentence-ending punctuation followed by space or end-of-string.
-    # Handles: period, exclamation, question mark.
-    sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
+    result: list[str] = []
+    start = 0
+    # A boundary is sentence-ending punctuation, an optional closing quote/paren,
+    # then whitespace, followed by something that looks like a new sentence.
+    for m in re.finditer(r"[.!?]+[\"')\]]?\s+(?=[A-Z0-9\"'(])", text):
+        preceding = text[start : m.start()]
+        last_token = preceding.split()[-1] if preceding.split() else ""
+        # Normalize: drop internal/trailing periods so "U.S" -> "us", "Dr" -> "dr".
+        normalized = last_token.replace(".", "").strip(",;:\"'()").lower()
+        if normalized in _ABBREVIATIONS or len(normalized) == 1:
+            continue
+        sentence = text[start : m.end()].strip()
+        if sentence:
+            result.append(sentence)
+        start = m.end()
 
-    # Filter empty strings and strip whitespace
-    result = []
-    for s in sentences:
-        s = s.strip()
-        if s:
-            result.append(s)
+    tail = text[start:].strip()
+    if tail:
+        result.append(tail)
 
     return result

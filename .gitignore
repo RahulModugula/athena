@@ -18,11 +18,12 @@ env/
 *.swp
 *.swo
 
-# Testing
+# Testing / tooling caches
 .pytest_cache/
 .coverage
 htmlcov/
 .mypy_cache/
+.ruff_cache/
 
 # Models (downloaded at runtime)
 models/
@@ -39,3 +40,10 @@ Thumbs.db
 
 # Environment
 .env
+
+# Claude Code local settings
+.claude/
+.odin/
+scratchpad/
+# Recording build artifact (GIF is committed; cast is regenerated)
+assets/*.cast

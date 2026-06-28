@@ -5,7 +5,8 @@ Provides a node factory for building circuit-breaker patterns in LangGraph agent
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from athena_verify.core import verify_step
 from athena_verify.models import StepResult

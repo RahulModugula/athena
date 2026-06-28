@@ -24,6 +24,25 @@ No document ingestion. No chunking. No agents. No database. Works identically on
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 ![Version](https://img.shields.io/badge/version-0.1.0-orange)
 
+## Stop hallucinations before they cascade
+
+In a multi-step agent, each step's output feeds the next — a single fabricated
+figure propagates straight into the final answer. `verify_step()` is a circuit
+breaker that halts the chain the moment a claim stops being grounded in the
+evidence:
+
+![Agent circuit-breaker demo](assets/circuit_breaker.gif)
+
+```python
+from athena_verify import verify_step
+
+step = verify_step(claim=reasoning_step, evidence=retrieved_chunks, threshold=0.5)
+if step.action == "halt":
+    raise RuntimeError(f"Ungrounded claim blocked (trust={step.trust_score:.2f})")
+```
+
+Run it yourself: [`examples/agent_circuit_breaker.py`](examples/agent_circuit_breaker.py).
+
 ## How It Works
 
 ```
@@ -81,21 +100,46 @@ pip install "athena-verify[all]"
 
 Evaluated on 100 synthetic cases across 6 hallucination categories (legal, medical, technical, general). Real-world benchmarks against RAGTruth and HaluEval are in progress — download instructions are in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md).
 
-### Per-Category Performance (NLI-only, synthetic, nli-deberta-v3-base)
+### Hallucination Detection (NLI-only, synthetic, nli-deberta-v3-base)
+
+Each row is the per-category F1 for *catching hallucinations*. The faithful-text
+row is intentionally excluded here — it contains no hallucinations, so its F1 is
+undefined; we report its false-positive rate separately below, which is the
+number that actually matters for clean text.
 
 | Category | Precision | Recall | **F1** |
 |----------|-----------|--------|--------|
-| **Fabricated claims** | 100% | 97% | **98.6%** ✓ |
+| **Fabricated claims** | 100% | 96% | **97.9%** ✓ |
 | **Out-of-context** | 100% | 97% | **98.3%** ✓ |
 | **Subtle contradictions** | 100% | 97% | **98.3%** ✓ |
-| **Number substitutions** | 79% | 96% | **86.8%** |
-| **Partial support** | 78% | 95% | **85.7%** |
-| **Faithful statements** | 0% | 0% | **0.0%** ✗ |
-| **Overall** | 87% | 97% | **91.3%** (synthetic) |
+| **Partial support** | 95% | 91% | **93.0%** |
+| **Number substitutions** | 82% | 96% | **88.5%** |
+| **Overall** | 95% | 96% | **95.0%** (synthetic) |
 
-### Where We Lose
+**False-positive rate on faithful text: 4.6%** (4 of 87 genuinely-supported
+sentences flagged) on the base model, **3.4%** on the large model — down from 17%
+before calibration. Latency: **p50 22.5 ms, p95 34.5 ms** per verification on the
+base model. Numbers are reproducible with `python benchmarks/run_full_eval.py`.
 
-Athena has a **high false positive rate on truly faithful statements** (31% of genuinely faithful sentences are incorrectly flagged). This is a known NLI-model limitation — conservative thresholds bias toward catching hallucinations at the cost of flagging clean sentences.
+### How false positives are kept low
+
+Standalone NLI scores many faithful paraphrases as "neutral" (entailment ≈ 0)
+even when the claim is fully supported. Athena recovers these without letting
+hallucinations through, using three guarded signals:
+
+- **Anaphora windowing** — a sentence opening with a referent ("This cap…", "It
+  also…") is scored together with its predecessor, restoring the antecedent.
+- **Contradiction-aware rescue** — a not-entailed claim is only rescued when the
+  most on-topic context unit does *not* contradict it, so reversals and subtle
+  contradictions stay flagged.
+- **Numeric gate** — rescue requires every number in the claim to appear in the
+  context, so number-substitution hallucinations ("$5M" vs a "$2M" context) are
+  never rescued.
+
+The remaining false positives are heavily-paraphrased claims with little lexical
+overlap (e.g. "olive oil is drizzled on top"); enable the optional LLM-judge
+escalation (`use_llm_judge=True`) for those. Athena still biases toward catching
+hallucinations over passing every clean sentence — treat it as a guardrail.
 
 **LettuceDetect beats athena on span-level F1** on real-world benchmarks (LettuceDetect 79.2% F1 on annotated spans vs. athena's unvalidated real-world score). Athena wins on latency bounds, provider-neutrality, offline execution, and the spans-in-library integration story — not raw F1.
 

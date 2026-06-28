@@ -12,10 +12,12 @@ from athena_verify.models import Chunk, VerificationResult
 
 @pytest.fixture(autouse=True)
 def _mock_nli():
-    with (
-        patch("athena_verify.core.batch_compute_entailment", return_value=[0.85]),
-        patch("athena_verify.core.batch_compute_entailment_async", return_value=[0.85]),
-    ):
+    # _ground_sentences scores one pair per (context unit, sentence); return a
+    # constant (entailment, contradiction) for each so answers score uniformly.
+    def fake_nli(pairs, *args, **kwargs):
+        return [(0.85, 0.05)] * len(pairs)
+
+    with patch("athena_verify.core.batch_compute_nli", side_effect=fake_nli):
         yield
 
 
@@ -248,17 +250,9 @@ class TestLatencyBudget:
         from unittest.mock import MagicMock, patch
 
         llm_client = MagicMock()
-        result = verify(
-            question="What?",
-            answer="Some answer.",
-            context=["Some context"],
-            use_llm_judge=True,
-            llm_client=llm_client,
-            latency_budget_ms=50,
-        )
 
         with patch("athena_verify.core.batch_judge_sentences") as mock_judge:
-            result = verify(
+            verify(
                 question="What?",
                 answer="Some answer.",
                 context=["Some context"],

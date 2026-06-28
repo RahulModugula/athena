@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from athena_verify import verify
+from athena_verify.models import VerificationResult
 
 
 def color_score(score: float) -> str:
@@ -30,7 +31,7 @@ def format_trust_score(score: float, width: int = 6) -> str:
     return f"{color_score(score)}{score:.2f}{reset_color()}"
 
 
-def print_table(result) -> None:
+def print_table(result: VerificationResult) -> None:
     """Print colored sentence-by-sentence trust score table."""
     print()
     print("Verification Results")

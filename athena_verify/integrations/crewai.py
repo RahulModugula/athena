@@ -5,8 +5,6 @@ Provides a CrewAI tool for verifying claims in agent workflows.
 
 from __future__ import annotations
 
-from typing import Any
-
 from athena_verify.core import verify_step
 
 try:
@@ -14,11 +12,11 @@ try:
 
     _CREWAI_AVAILABLE = True
 except ImportError:
-    BaseTool = object  # type: ignore[misc,assignment]
+    BaseTool = object
     _CREWAI_AVAILABLE = False
 
 
-class AthenaVerifyTool(BaseTool):
+class AthenaVerifyTool(BaseTool):  # type: ignore[misc]
     """CrewAI tool for verifying factual claims against evidence.
 
     Verify whether a claim is supported by the given evidence.

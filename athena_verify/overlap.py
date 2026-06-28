@@ -9,6 +9,60 @@ overlap against chunk IDs instead of chunk content.
 
 from __future__ import annotations
 
+import re
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+# A number: digits with optional thousands separators / decimal part.
+_NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+# Function words carry no grounding signal; excluding them keeps containment
+# from being inflated by shared "the/of/is" tokens.
+_STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "of", "to", "in", "on", "for", "and", "or", "but", "with", "at", "by",
+        "as", "that", "this", "these", "those", "it", "its", "from", "into",
+        "than", "then", "also", "such", "which", "their", "they", "them",
+        "has", "have", "had", "will", "shall", "may", "can", "any", "all",
+        "not", "no", "only", "other", "more", "most", "some", "each", "both",
+    }
+)
+
+
+def _normalize_number(token: str) -> str:
+    """Strip thousands separators so '1,200' and '1200' compare equal."""
+    return token.replace(",", "")
+
+
+def containment_score(sentence: str, context_text: str) -> float:
+    """Fraction of a sentence's content words that appear in the context.
+
+    Unlike symmetric token F1 (which is penalised by long context), this is a
+    precision-style measure of how much of the *claim* is lexically grounded.
+    It is the signal used to rescue faithful paraphrases that standalone NLI
+    scores as neutral.
+    """
+    ctx_tokens = set(_WORD_RE.findall(context_text.lower()))
+    words = [
+        w for w in _WORD_RE.findall(sentence.lower()) if len(w) > 2 and w not in _STOPWORDS
+    ]
+    if not words:
+        return 0.0
+    return sum(1 for w in words if w in ctx_tokens) / len(words)
+
+
+def numeric_consistency(sentence: str, context_text: str) -> bool:
+    """True if every number in the sentence also appears in the context.
+
+    Comma-insensitive. Returns True when the sentence contains no numbers.
+    This is the guard that keeps number-substitution hallucinations
+    ("the cap is $5M" against a $2M context) from being rescued by lexical
+    containment, since the swapped figure will be absent from the context.
+    """
+    ctx_nums = {_normalize_number(n) for n in _NUM_RE.findall(context_text)}
+    sent_nums = [_normalize_number(n) for n in _NUM_RE.findall(sentence)]
+    return all(n in ctx_nums for n in sent_nums)
+
 
 def token_f1(text1: str, text2: str) -> float:
     """Compute token-level F1 overlap between two texts.
