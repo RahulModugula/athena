@@ -139,10 +139,16 @@ def compute_overall_trust(
     if not sentences:
         return 0.0, False
 
-    overall_trust = sum(s.trust_score for s in sentences) / len(sentences)
+    # Only verifiable claims count toward the overall score; questions and
+    # meta/refusal sentences are marked NOT_A_CLAIM and excluded.
+    claims = [s for s in sentences if s.support_status != "NOT_A_CLAIM"]
+    if not claims:
+        return 1.0, True
+
+    overall_trust = sum(s.trust_score for s in claims) / len(claims)
     unsupported_ratio = sum(
-        1 for s in sentences if s.support_status in ("UNSUPPORTED", "CONTRADICTED")
-    ) / len(sentences)
+        1 for s in claims if s.support_status in ("UNSUPPORTED", "CONTRADICTED")
+    ) / len(claims)
 
     # Verification passes if mean trust is above threshold AND
     # fewer than 30% of sentences are unsupported/contradicted

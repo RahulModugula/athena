@@ -20,6 +20,11 @@ NLI_MODEL_ALIASES: dict[str, str] = {
     "lightweight": "cross-encoder/nli-MiniLM2-L6-H768",
     "vectara": "vectara/hallucination_evaluation_model",
     "deberta-base": "MoritzLaworr/NLI-deberta-base",
+    # Purpose-built grounding checkers — far better calibrated on abstractive
+    # RAG answers than generic NLI, at the cost of a larger model. Opt in with
+    # nli_model="minicheck". See docs/models.md.
+    "minicheck": "lytang/MiniCheck-DeBERTa-v3-Large",
+    "minicheck-roberta": "lytang/MiniCheck-RoBERTa-Large",
 }
 
 
@@ -35,17 +40,63 @@ def resolve_nli_model(model_name: str) -> str:
     return NLI_MODEL_ALIASES.get(model_name, model_name)
 
 
+def _is_minicheck(resolved: str) -> bool:
+    return "minicheck" in resolved.lower()
+
+
+class MiniCheckScorer:
+    """Adapter exposing a MiniCheck checkpoint through the same ``.predict()``
+    interface the rest of the pipeline expects.
+
+    MiniCheck is a fact-grounding classifier: given ``(document, claim)`` it
+    returns P(claim is supported by document). We format each premise/hypothesis
+    pair as ``premise <eos> hypothesis`` and return that probability as a scalar,
+    which :func:`batch_compute_nli` treats as the entailment score (with
+    contradiction = ``1 - entailment``).
+    """
+
+    def __init__(self, model_id: str) -> None:
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+        self._torch = torch
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_id).eval()
+        self._sep = self.tokenizer.eos_token or self.tokenizer.sep_token or "[SEP]"
+
+    def predict(self, pairs: list[Any], batch_size: int = 16) -> list[float]:
+        torch = self._torch
+        out: list[float] = []
+        for start in range(0, len(pairs), batch_size):
+            batch = pairs[start : start + batch_size]
+            texts = [f"{premise}{self._sep}{hypothesis}" for premise, hypothesis in batch]
+            enc = self.tokenizer(
+                texts, max_length=2048, truncation=True, padding=True, return_tensors="pt"
+            )
+            with torch.no_grad():
+                logits = self.model(**enc).logits
+            out.extend(torch.softmax(logits, dim=-1)[:, 1].tolist())
+        return out
+
+
 @lru_cache(maxsize=32)
 def get_nli_model(model_name: str = "cross-encoder/nli-deberta-v3-base") -> Any:
-    """Load the NLI cross-encoder model (lazy, cached).
+    """Load the grounding model (lazy, cached).
+
+    Returns a sentence-transformers ``CrossEncoder`` for NLI checkpoints, or a
+    :class:`MiniCheckScorer` for MiniCheck checkpoints. Both expose ``.predict``.
 
     Args:
-        model_name: HuggingFace model identifier for the cross-encoder.
+        model_name: HuggingFace model identifier or alias.
 
     Returns:
-        CrossEncoder model instance.
+        A model instance with a ``.predict(pairs)`` method.
     """
     resolved = resolve_nli_model(model_name)
+
+    if _is_minicheck(resolved):
+        logger.info("loading_minicheck_model", model=resolved, alias=model_name)
+        return MiniCheckScorer(resolved)
 
     try:
         from sentence_transformers import CrossEncoder
