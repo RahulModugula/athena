@@ -22,6 +22,7 @@ from athena_verify.calibration import (
     compute_overall_trust,
     compute_trust_score,
 )
+from athena_verify.claims import is_checkworthy
 from athena_verify.llm_judge import LLMClient, batch_generate_revisions, batch_judge_sentences
 from athena_verify.models import (
     Chunk,
@@ -228,6 +229,10 @@ def _trust_and_status(
         containment=containment_score(sentence, context_text),
         numeric_ok=numeric_consistency(sentence, context_text),
     )
+    # Questions and meta/refusal statements aren't verifiable claims — never
+    # flag them as hallucinations (they're usually the honest, correct response).
+    if not is_checkworthy(sentence):
+        return trust, "NOT_A_CLAIM"
     return trust, classify_support(trust)
 
 

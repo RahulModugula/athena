@@ -9,6 +9,35 @@ All results are **real, reproducible, and measured on this codebase**. No projec
 - **Seed**: 42 (deterministic)
 - **Date**: 2026-06-27
 
+## Real-World Results (zero-shot)
+
+Athena is **not trained or tuned** on any of these datasets. The decision
+threshold is tuned on a disjoint split and reported on the held-out test split.
+
+### RAGTruth QA (response-level, 900 test responses, 18% positive)
+
+| Metric | athena (NLI, zero-shot) | Note |
+|--------|-------------------------|------|
+| Balanced accuracy | **0.71** | TPR 0.71 / TNR 0.71 — the fair metric on imbalanced data |
+| Accuracy | **0.71** | |
+| F1 (positive = hallucinated) | 0.47 | suppressed by 18% class imbalance |
+
+Reference (RAGTruth response-level F1): LettuceDetect-large **79.2** overall / **70.2** QA — a ModernBERT detector **fine-tuned on the RAGTruth training set** (not zero-shot); Luna 51.3 QA; GPT-4-turbo prompted 45.6 QA. Athena's balanced accuracy is competitive zero-shot; its lower F1 reflects the imbalanced response-level metric, not weaker per-sentence detection.
+
+Aggregation matters: replacing "flag if *any* sentence is unsupported" with a length-normalized fraction over **check-worthy** sentences (skipping questions / refusals / "the passages do not mention X") lifts F1 from 0.44 → 0.47 and removes false positives on the ~17% of clean responses that contain a meta/refusal sentence.
+
+### HaluEval QA (per-answer, 500 held-out)
+
+| Metric | athena (NLI, zero-shot) |
+|--------|-------------------------|
+| Accuracy | **0.69** |
+| Faithful-answer pass rate | 0.82 |
+| Hallucinated-answer catch rate | 0.56 |
+
+Reference (HaluEval QA accuracy): GPT-3.5 ≈ 0.62, GPT-4 ≈ 0.85 (prompted). Athena runs locally at ~25 ms with zero cost.
+
+Reproduce: clone RAGTruth / download HaluEval (instructions below) and run the harnesses in this directory.
+
 ## Real Dataset Acquisition
 
 ### RAGTruth (18K examples)

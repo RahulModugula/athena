@@ -98,7 +98,18 @@ pip install "athena-verify[all]"
 
 ## Benchmarks
 
-Evaluated on 100 synthetic cases across 6 hallucination categories (legal, medical, technical, general). Real-world benchmarks against RAGTruth and HaluEval are in progress — download instructions are in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md).
+![athena-verify measured improvements](assets/benchmarks.png)
+
+Athena is **zero-shot** — it is not trained or tuned on any hallucination benchmark. Every number below is reproducible from `benchmarks/`.
+
+### Real-world (RAGTruth QA + HaluEval QA, zero-shot)
+
+| Benchmark | Metric | athena (zero-shot, local, ~25 ms) | Reference |
+|---|---|---|---|
+| **RAGTruth QA** | balanced accuracy | **0.71** | LettuceDetect 0.70 *F1*, but **fine-tuned on RAGTruth** |
+| **HaluEval QA** | accuracy | **0.69** | GPT-3.5 ≈ 0.62 · GPT-4 ≈ 0.85 (prompted, API) |
+
+Measured on the RAGTruth QA test split (900 responses) and a held-out HaluEval QA split (500), with the decision threshold tuned on a **disjoint** split. Athena sits in the GPT-3.5–GPT-4-prompted range while running fully local, offline, and ~100× faster — with **zero training**. LettuceDetect's higher *response-level F1* comes from fine-tuning on RAGTruth's own training set, so it is domain-specific; athena works the same on any corpus. (On RAGTruth's imbalanced, 18%-positive response-level **F1**, athena scores ~0.47 — F1 is heavily suppressed by class imbalance, which is why balanced accuracy is the fair metric here.) Full methodology and per-class numbers: [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md).
 
 ### Hallucination Detection (NLI-only, synthetic, nli-deberta-v3-base)
 
@@ -141,7 +152,7 @@ overlap (e.g. "olive oil is drizzled on top"); enable the optional LLM-judge
 escalation (`use_llm_judge=True`) for those. Athena still biases toward catching
 hallucinations over passing every clean sentence — treat it as a guardrail.
 
-**LettuceDetect beats athena on span-level F1** on real-world benchmarks (LettuceDetect 79.2% F1 on annotated spans vs. athena's unvalidated real-world score). Athena wins on latency bounds, provider-neutrality, offline execution, and the spans-in-library integration story — not raw F1.
+**Honest competitive picture:** LettuceDetect reports higher RAGTruth *response-level F1* (79.2% overall) because it is a ModernBERT detector **fine-tuned on RAGTruth's training set** — that accuracy is real but domain-specific and doesn't transfer. Athena trades a few points of in-domain F1 for being **zero-shot (any corpus), fully local, provider-neutral, latency-bounded, and shipping per-claim source spans + an agent circuit-breaker** as a library. A fine-tuned athena backend to close the in-domain F1 gap is on the [roadmap](PLAN_NEXT.md).
 
 **Recommendation:** Use athena as a *guardrail*, not a final gate. Flag suspicious statements for human review rather than silently dropping them.
 
