@@ -1,102 +1,81 @@
-# Why Your RAG is Hallucinating and How Sentence-Level NLI Catches It
+# What I learned building a zero-shot RAG hallucination detector
 
-Every RAG system hallucinates. Not sometimes — always. The question isn't whether your retrieval-augmented generation pipeline produces fabricated facts. It's whether you know when it does.
+I spent the last few months building [athena-verify](https://github.com/RahulModugula/athena), an open-source runtime guardrail that checks whether an LLM answer is actually grounded in the context you retrieved, sentence by sentence, locally, with no API calls. This is the honest write-up: what worked, where it hits a ceiling, and the two things I got wrong on the way.
 
-I spent the last few months building [Athena](https://github.com/RahulModugula/athena), an open-source runtime guardrail that catches RAG hallucinations at the sentence level, in production, with zero API cost. Here's what I learned about why RAG hallucinates and how to catch it.
+None of the numbers here are cherry-picked. Every figure is reproducible from `benchmarks/` in the repo, and where athena loses to a fine-tuned model, I say so.
 
-## The Inevitability of RAG Hallucinations
+## The problem
 
-RAG systems don't hallucinate because they're broken. They hallucinate because of fundamental tensions in how they work:
+RAG systems make things up, and they do it with total confidence. Retrieval looks fine, the answer reads fine, but one sentence quietly invents a number or flips a negation, and there is no signal until a user catches it. The existing tools mostly tell you this after the fact: Ragas, TruLens, and DeepEval are batch evaluators that report a faithfulness rate over a test set. They do not stand between the model and the user at request time, and they do not tell you *which sentence* is the problem.
 
-**Retrieval is lossy.** You chunk documents, embed them, and retrieve the top-k by vector similarity. But similarity isn't sufficiency. The retrieved chunks may not contain the specific fact the LLM needs, and the LLM will fill the gap with its training data rather than admitting ignorance.
+I wanted something boring and deployable: a function you call on a single answer, in-request, that returns a per-sentence verdict and the source span behind it. No document ingestion, no chunking, no database, no fine-tuning on my data.
 
-**Generation is confabulatory.** LLMs are completion engines. Given a prompt that says "the indemnification cap is" they will complete it, even if the context says nothing about indemnification. The more fluent the model, the more convincing the hallucination.
+## The approach: split, score, aggregate
 
-**Context windows create ambiguity.** Even when the right information is retrieved, the LLM must synthesize across multiple chunks. Synthesis introduces errors — conflating numbers from different sources, attributing properties to the wrong entity, or contradicting a clause while paraphrasing it.
+The core is deliberately simple so it runs anywhere:
 
-In production, we've seen hallucination rates of 5-15% even on well-tuned RAG pipelines. The existing tools for detecting this — Ragas, TruLens, DeepEval — are offline batch evaluators. They tell you your system's hallucination rate *after the fact*. They don't catch hallucinations *before they reach the user*.
+1. Split the answer into sentences.
+2. Split the context into sentences too.
+3. Score each answer sentence against the context with a natural-language-inference (NLI) cross-encoder, taking the best supporting match.
+4. Add a lexical-overlap signal and combine into a trust score.
+5. Optionally escalate borderline sentences to a local LLM judge.
 
-That's the gap Athena fills.
+The one implementation detail that mattered more than anything else: **score against individual context sentences, not the whole blob.** When you feed the NLI model one long context string, it sees information beyond the claim and labels almost everything "neutral." Scoring each context sentence as its own premise and taking the max recovers real entailment signal, and it is the difference between a model that can read a number and one that can't.
 
-## The Approach: Split Context, Score Per-Sentence
+I use DeBERTa-v3 as the cross-encoder. It is small (~1.2 GB), runs at about 22 ms p50 on an M1 Max, and it is zero-shot — not trained or tuned on any hallucination dataset.
 
-Athena splits the LLM's answer into sentences and independently verifies each one against the retrieved context using three signals:
+## Mistake #1: I optimized for catching hallucinations and ignored the false-positive rate
 
-### 1. Per-Sentence NLI Entailment
+The first version caught hallucinations beautifully and flagged faithful sentences constantly. On my synthetic set the false-positive rate on genuinely-supported sentences was **17%**. A guardrail that cries wolf on one in six good sentences is worse than useless — people turn it off.
 
-Natural Language Inference models determine whether a premise *entails* a hypothesis. We frame each context sentence as a premise and each answer sentence as a hypothesis.
+The root cause was not the model. It was three specific failure modes:
 
-A critical implementation detail: we split context chunks into individual sentences before NLI scoring. When context is passed as one long string, the NLI model sees information *beyond* the hypothesis and classifies it as "neutral" rather than "entailed." By scoring against each context sentence individually and taking the max, we get accurate entailment detection even for long documents.
+- **Anaphora.** A sentence like "It also caps annual liability at $5M" scores as unsupported because "It" has no antecedent in isolation. Fix: when a sentence opens with a referent, score it together with its predecessor so the antecedent is restored.
+- **Faithful paraphrases scoring as neutral.** NLI often lands a fully-supported rephrase in the neutral band. Fix: a rescue step that only fires when the claim is *not contradicted* by the most on-topic context, most of its words are grounded, and — critically — every number in it appears in the context. That numeric gate is what stops the rescue from waving through "$1M" when the context says "$2M."
+- **Meta sentences.** "The passages do not mention X" and refusals are not claims to verify. A check-worthiness filter skips them.
 
-We use DeBERTa-v3-base as our cross-encoder NLI model. It's small (~1.2 GB), fast (~17ms per verification on Apple Silicon), and catches 91.3% of hallucinations.
+Those three changes took the false-positive rate from **16.9% to 4.6%** on the base model (3.4% on the large one) without letting hallucinations through — synthetic hallucination-catch F1 actually went *up*, from 91.3% to **95.0%**. The lesson: for a guardrail, the false-positive rate is the product. Everyone benchmarks recall; the thing that decides whether anyone keeps it on is precision on clean text.
 
-### 2. Lexical Overlap
+## Mistake #2: I assumed synthetic numbers meant something
 
-Token-level F1 overlap between the sentence and the context chunks. This catches cases where the LLM uses vocabulary that doesn't appear anywhere in the retrieved context — a strong signal of fabrication.
+95% F1 on a synthetic set that I generated is a nice number and it proves almost nothing, because I wrote both the hallucinations and the ground truth. So I ran the real benchmarks the field uses, zero-shot, and reported them straight:
 
-### 3. LLM-as-Judge (Optional)
+| Benchmark | Metric | athena (zero-shot, local, ~25 ms) | Reference |
+|---|---|---|---|
+| RAGTruth QA | balanced accuracy | **0.71** | LettuceDetect 0.70 F1, but fine-tuned on RAGTruth |
+| HaluEval QA | accuracy | **0.69** | GPT-3.5 ≈ 0.62, GPT-4 ≈ 0.85 (prompted, API) |
 
-For high-stakes use cases, you can enable an LLM judge on every sentence. This catches paraphrases and implicit knowledge that NLI misses. The tradeoff is latency: ~7.4s per sentence (local gemma-4-31b-it on M1 Max) vs ~17ms for NLI-only.
+On RAGTruth's imbalanced, 18%-positive response-level F1, athena scores about **0.47** — and I put that in the README too, because that is the honest number and class imbalance is why balanced accuracy is the fair metric. LettuceDetect reports ~79% F1 on RAGTruth, but it is a ModernBERT detector fine-tuned on RAGTruth's own training split. That accuracy is real and it is domain-specific: it does not transfer to your corpus. Athena trades in-domain accuracy for working on any corpus with zero training.
 
-## What the Benchmarks Show (100 Test Cases, 6 Categories)
+Here is the thing I did not want to admit and now think is the most useful conclusion: **a zero-shot NLI-then-aggregate pipeline has a ceiling on abstractive RAG answers, and swapping the checkpoint doesn't break it.** I tried MiniCheck-DeBERTa as a drop-in backend; it did not beat the default on RAGTruth QA. The limitation is the paradigm, not the model. If you want to top an in-domain benchmark, you fine-tune on that benchmark, which is exactly what the SOTA detectors do.
 
-| Category | Precision | Recall | F1 |
-|----------|-----------|--------|-----|
-| Fabricated claims | 100.0% | 98.7% | **99.3%** |
-| Out-of-context | 100.0% | 93.3% | **96.6%** |
-| Number substitutions | 79.3% | 95.8% | **86.8%** |
-| Subtle contradictions | 100.0% | 100.0% | **100.0%** |
-| Partial support | 75.9% | 100.0% | **86.3%** |
-| **Overall** | **86.6%** | **96.7%** | **91.3%** |
+## Where this actually leaves a zero-shot library in 2026
 
-Latency: p50 ~17ms, p95 ~26ms. Zero cost. All local.
+By mid-2026 the "local span-level detector" lane is crowded — LettuceDetect keeps shipping better trained detectors, and inference stacks are starting to bake groundedness gates in directly. Competing on raw detection F1 against a model fine-tuned on the exact benchmark is a losing game, and pretending otherwise is how you get taken apart in the comments.
 
-False positive rate on faithful sentences: 17% — meaning 83% of faithful sentences pass without flags.
+So I stopped framing athena as "another detector" and started treating detection as the cheap first layer under two things that are genuinely underserved:
 
-### What Surprised Me
-
-I expected NLI to be great at fabricated claims and terrible at number substitutions. The conventional wisdom is that NLI models can't distinguish "$2M" from "$1M" because the surrounding tokens are identical.
-
-That turned out to be wrong — or rather, it was only wrong because of a bug in how context was being fed to the model. When context chunks are split into individual sentences for NLI scoring, DeBERTa correctly catches number substitutions 86.8% of the time and negation flips 100% of the time. The model *can* read numbers — it just needs focused, sentence-level premises to do it.
-
-## Why Not Just Use an LLM for Everything?
-
-You could. GPT-4 as a judge gets ~85-90% F1 on these benchmarks. But:
-
-1. **Cost**: GPT-4 is ~$3 per 1K sentences. At production scale (millions of queries), that's real money.
-2. **Latency**: Each GPT-4 call is 1-3 seconds. Users won't wait.
-3. **Dependency**: Your verification system now depends on OpenAI's uptime.
-4. **Privacy**: You're sending user queries and retrieved context to a third party.
-
-NLI-only gets 91.3% F1 at zero marginal cost, with p50 latency of ~17ms, running entirely on a MacBook. It outperforms GPT-4-as-judge on these benchmarks while being orders of magnitude faster and cheaper.
-
-## The Three-Line API
+- **A revision step, not just a score.** Almost every tool flags; very few propose the corrected sentence in the same pass. `suggest_revisions=True` returns the fix, not just the flag.
+- **A framework-agnostic circuit-breaker for agents.** In a multi-step agent, one step's output is the next step's input, so a fabricated fact cascades and you find out at the end. `verify_step()` returns a pass/halt verdict against a step's evidence so you can stop the chain the moment it stops being grounded — in any agent loop, not welded to one serving stack.
 
 ```python
-from athena_verify import verify
+from athena_verify import verify_step
 
-result = verify(
-    question="What is the indemnification cap?",
-    answer="The cap is $1M per incident.",
-    context=retrieved_chunks,
-)
-result.unsupported_texts  # → ["The cap is $1M per incident."]
+step = verify_step(claim=reasoning_step, evidence=retrieved_chunks, threshold=0.5)
+if step.action == "halt":
+    raise RuntimeError(f"ungrounded step blocked, trust={step.trust_score:.2f}")
 ```
 
-No document ingestion. No chunking. No agents. No database. You pass in the question, the answer, and the context your RAG system already retrieved. You get back a trust score, per-sentence verification, and a list of unsupported claims.
+The detector is zero-shot and provider-neutral by design, so the same code path runs on GPT, Claude, Llama, or Qwen output, and the NLI backend is swappable — a stronger trained detector can slot in underneath the same revision and circuit-breaker layer.
 
-Athena is open source (MIT), runs locally, and works with any RAG framework — LangChain, LlamaIndex, or raw LLM calls. Check it out at [github.com/RahulModugula/athena](https://github.com/RahulModugula/athena).
+## What's next
 
-## What's Next
+- An opt-in trained backend (LettuceDetect's recipe) for people who want in-domain SOTA F1, keeping zero-shot as the default so the any-corpus pitch holds.
+- Cheap zero-shot accuracy gains that keep the default honest: gated embedding-cosine rescue for low-overlap paraphrases, top-k premise retrieval before NLI.
+- A short benchmark write-up on honest zero-shot grounding, with the RAGTruth and HaluEval harnesses published for reproduction.
 
-The NLI-only path handles the vast majority of hallucinations. Remaining areas to improve:
-
-- **Paraphrase detection**: Faithful sentences that rephrase context in different words sometimes get flagged (17% false positive rate).
-- **Implicit knowledge**: Sentences that are true but not directly stated in the context (e.g., "Paris is the capital of France" when the context mentions France but not its capital).
-- **Smaller models**: Can we get the same accuracy with a smaller NLI model for even lower latency?
-
-Contributions and benchmark results welcome. The synthetic benchmark is in the repo, reproducible with one command.
+The synthetic and real-world benchmarks are both in the repo, reproducible with one command each. If you run athena on your own data and it breaks, I want the failure case — that is the fastest way this gets better.
 
 ---
 
-*Tested on Apple M1 Max, 64GB RAM. All numbers are from real runs with deterministic seeds. See [benchmarks/RESULTS.md](https://github.com/RahulModugula/athena/blob/main/benchmarks/RESULTS.md) for full details and reproduction instructions.*
+*All numbers are from real runs with deterministic seeds on an Apple M1 Max. See [benchmarks/RESULTS.md](https://github.com/RahulModugula/athena/blob/main/benchmarks/RESULTS.md) for full methodology and reproduction.*
