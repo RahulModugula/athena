@@ -158,17 +158,18 @@ hallucinations over passing every clean sentence — treat it as a guardrail.
 
 ### Comparison
 
-| Tool | Runs locally | Provider-neutral | Latency budget knob | Per-claim spans | F1 (real) |
-|------|---|---|---|---|---|
-| **Athena** | Yes | Yes | Yes | Yes | TBD¹ |
-| LettuceDetect | Yes | Yes | No | No | **79.2%** |
-| HHEM-2.1 | Yes | Yes | No | No | ~82% |
-| Ragas | Yes | No (LLM calls) | No | No | ~75% |
-| Azure Groundedness | No (cloud only) | No (GPT-4o only) | No | No | ~90% |
-| Vertex Grounding | No (cloud only) | No (Gemini only) | No | No | ~88% |
-| Anthropic Citations | No (cloud only) | No (Claude only) | No | No | — |
+| Tool | Runs locally | Provider-neutral | Latency budget knob | Per-claim spans | Agent circuit-breaker | RAGTruth QA (real) |
+|------|---|---|---|---|---|---|
+| **Athena** | Yes | Yes | Yes | Yes | **Yes** | 0.71 bal. acc, zero-shot¹ |
+| LettuceDetect | Yes | Yes | No | Span-level | No | 70.2 F1, fine-tuned² |
+| HHEM-2.1 | Yes | Yes | No | No | No | passage-level² |
+| Ragas | Yes | No (LLM calls) | No | No | No | ~55 F1 (LLM judge) |
+| Azure Groundedness | No (cloud only) | No (GPT-4o only) | No | No | No | ~cloud-only |
+| Vertex Grounding | No (cloud only) | No (Gemini only) | No | No | No | ~cloud-only |
+| Anthropic Citations | No (cloud only) | No (Claude only) | No | No | No | — |
 
-¹ RAGTruth and HaluEval benchmarks pending; see `benchmarks/RESULTS.md` for download instructions.
+¹ Athena is **zero-shot** (no training on RAGTruth): 0.71 balanced accuracy on RAGTruth QA, 0.47 response-level F1 (F1 is suppressed by 18% class imbalance — see [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)).
+² LettuceDetect's 70.2 QA F1 is **fine-tuned on the RAGTruth training split** — higher in-domain, but domain-specific and non-transferring. HHEM scores passages, not sentences. Athena trades in-domain F1 for zero-shot any-corpus coverage plus the circuit-breaker and revision layer no local competitor ships.
 
 Full methodology: [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)
 

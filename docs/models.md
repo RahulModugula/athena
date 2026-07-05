@@ -4,12 +4,18 @@ Different NLI models offer different speed/accuracy trade-offs. Choose based on 
 
 ## Available Models
 
-| Model | Alias | Size | Latency | F1 | Best For |
-|-------|-------|------|---------|-----|----------|
-| **DeBERTa-v3 Base** | `default` | 700 MB | ~12ms | 91.3% | ✓ Recommended; best balance |
-| **DeBERTa-v3 Large** | explicit URL | 1.8 GB | ~45ms | 92.5% | High accuracy (legal, finance) |
-| **MiniLM L6** | `lightweight` | 80 MB | ~3ms | 85.0% | Mobile/edge; speed priority |
-| **Vectara eval** | `vectara` | 400 MB | ~8ms | 88% | Specialized for hallucination |
+Only the **default** row is measured on the committed benchmark
+(`benchmarks/run_full_eval.py`: 95.0% synthetic hallucination-catch F1, 4.6%
+false-positive rate, p50 22.5 ms on an M1 Max). The other rows are indicative
+size/latency guidance — swap the model and re-run the eval to get real numbers
+for your hardware before relying on them.
+
+| Model | Alias | Approx. size | Approx. latency | Best For |
+|-------|-------|------|---------|----------|
+| **DeBERTa-v3 Base** | `default` | ~1.2 GB | ~22 ms | ✓ Recommended; best balance (benchmarked) |
+| **DeBERTa-v3 Large** | explicit URL | ~1.8 GB | ~45 ms | High accuracy (legal, finance); GPU helps |
+| **MiniLM L6** | `lightweight` | ~80 MB | ~3 ms | Mobile/edge; speed priority |
+| **MiniCheck-DeBERTa** | `minicheck` | ~1.4 GB | ~30 ms | Fact-checking-tuned; opt-in |
 
 ## When to Choose
 
