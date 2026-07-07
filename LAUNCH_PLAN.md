@@ -1,6 +1,14 @@
 # The Athena-Verify Launch Plan
 
-> Supersedes `WORLDCLASS_PLAN.md` (2026-04-17). This is the active plan.
+> **SUPERSEDED (2026-07-08)** — replaced by [`STRATEGY.md`](STRATEGY.md), which
+> reflects the shipped calibration work, the real RAGTruth/HaluEval numbers, and
+> the mid-2026 competitive landscape (LettuceDetect v2, vLLM HaluGate). The
+> blockers this doc lists (unrun benchmarks, stub examples, README/JSON
+> mismatch) are fixed; the one that remains is PyPI publish. Kept for history.
+> For launch-day copy and channels see [`LAUNCH.md`](LAUNCH.md); for the
+> technical roadmap see [`PLAN_NEXT.md`](PLAN_NEXT.md).
+>
+> Supersedes `WORLDCLASS_PLAN.md` (2026-04-17).
 > Based on code audit + web research on competitors, dev pain points, and viral dev-tool launch patterns in April 2026.
 
 ## TL;DR

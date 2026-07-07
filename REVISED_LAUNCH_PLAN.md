@@ -1,5 +1,14 @@
 # The Athena-Verify Revised Plan (April 17, 2026)
 
+> **SUPERSEDED (2026-07-08)** — replaced by [`STRATEGY.md`](STRATEGY.md). Its
+> vertical-market research (Part 2: legal citations, agent-cascade prevention,
+> slopsquatting, voice AI, finance, journalism) is still useful and is carried
+> forward into STRATEGY.md; its codebase blockers (Part 3) are fixed except
+> PyPI publish; its launch copy (Parts 6–9) is superseded by [`LAUNCH.md`](LAUNCH.md).
+> Note its "revision moat is dead" call was half-right: cloud APIs (Azure/Vectara)
+> added correction, but local OSS libraries still mostly only flag, so revision
+> remains a supporting differentiator behind the agent circuit-breaker.
+>
 > Supersedes `LAUNCH_PLAN.md`. Driven by April 2026 research: competitive landscape scan, use-case market research, and full codebase audit (30 findings).
 >
 > **Headline pivot: your `suggest_revisions` moat is dead.** Azure AI Content Safety shipped "Groundedness Detection + Correction" with GPT-4o-backed auto-rewrite; Vectara shipped a standalone "Hallucination Corrector" with an open benchmark; the HalluClean paper (arXiv 2511.08916) shipped a plan-execute-revise framework. Revision is now commodity. You need a new headline feature.
