@@ -33,6 +33,7 @@ from athena_verify.models import (
     VerificationResult,
 )
 from athena_verify.nli import batch_compute_nli
+from athena_verify.observability import emit_langfuse_trace, emit_otel_span
 from athena_verify.overlap import best_overlap_score, containment_score, numeric_consistency
 from athena_verify.parser import sentence_buffer, split_sentences
 
@@ -463,12 +464,10 @@ def verify(
     )
 
     if os.getenv("ATHENA_OTEL_ENABLED") == "1":
-        otel_span = result.to_otel_span()
-        logger.info("otel_span_generated", span=otel_span)
+        emit_otel_span(result)
 
     if os.getenv("ATHENA_LANGFUSE_ENABLED") == "1":
-        langfuse_trace = result.to_langfuse_trace()
-        logger.info("langfuse_trace_generated", trace=langfuse_trace)
+        emit_langfuse_trace(result)
 
     return result
 
@@ -649,12 +648,10 @@ async def verify_async(
     )
 
     if os.getenv("ATHENA_OTEL_ENABLED") == "1":
-        otel_span = result.to_otel_span()
-        logger.info("otel_span_generated", span=otel_span)
+        emit_otel_span(result)
 
     if os.getenv("ATHENA_LANGFUSE_ENABLED") == "1":
-        langfuse_trace = result.to_langfuse_trace()
-        logger.info("langfuse_trace_generated", trace=langfuse_trace)
+        emit_langfuse_trace(result)
 
     return result
 

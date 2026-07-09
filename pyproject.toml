@@ -49,8 +49,11 @@ langgraph = [
 crewai = [
     "crewai>=0.1.0",
 ]
+otel = [
+    "opentelemetry-sdk>=1.20.0",
+]
 all = [
-    "athena-verify[nli,llm,langchain,llamaindex,langgraph,crewai]",
+    "athena-verify[nli,llm,langchain,llamaindex,langgraph,crewai,otel]",
 ]
 dev = [
     "pytest>=8.0.0",
@@ -99,6 +102,7 @@ module = [
     "anthropic.*",
     "nltk.*",
     "crewai.*",
+    "opentelemetry.*",
 ]
 ignore_missing_imports = true
 
