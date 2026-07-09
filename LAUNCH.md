@@ -94,18 +94,24 @@ Optional same-day amplifier for backlinks and social proof. Not a primary star d
 Fill in <LINK> with the repo URL. Keep the honest limitation lines in. They are why people trust it.
 
 ### Show HN title (pick one)
-- Show HN: Athena, a local zero-shot hallucination detector for RAG pipelines
-- Show HN: Athena, detect RAG hallucinations offline, no labels, no fine-tuning
-- Show HN: Athena, span-level hallucination detection for RAG, no LLM judge needed
+- Show HN: Athena, a local verification layer for RAG and agents with a hallucination circuit-breaker ← recommended
+- Show HN: Athena, halt an agent chain the moment a step stops being grounded, runs locally
+- Show HN: Athena, local zero-shot RAG verification with per-claim source spans, no API key
+
+> Positioning note: the "local span-level detector" niche filled in H1 2026
+> (LettuceDetect v2, vLLM HaluGate). Lead with the verification *layer* and the
+> agent circuit-breaker, not "another detector" — that is the part competitors
+> don't ship as a drop-in. The three old detector-first titles are kept in git
+> history if you want them.
 
 ### Show HN body
-Athena is an open source library that checks whether an LLM answer is actually grounded in the context you retrieved, sentence by sentence. It runs locally on a small NLI model, so there are no API calls and nothing leaves your machine, and it works with any model provider.
+Athena is an open source library that verifies whether an LLM answer is actually grounded in the context you retrieved, sentence by sentence, and then does two things a detector alone doesn't: it hands back the corrected sentence, and it gives you a circuit-breaker that halts an agent chain the moment a step stops being grounded. It runs locally on a small NLI model, so there are no API calls and nothing leaves your machine, and it works with any model provider.
 
-You pass in the question, the answer, and the retrieved chunks. You get back a per-sentence trust score, the list of unsupported sentences, and the exact source span that supported each claim.
+You pass in the question, the answer, and the retrieved chunks. You get back a per-sentence trust score, the list of unsupported sentences, and the exact source span that supported each claim. For agents, verify_step() returns a pass or halt against a step's evidence so a bad fact can't cascade downstream.
 
-The honest version of the benchmarks, since that is the first thing anyone asks. It is zero-shot, so it is not trained on any hallucination dataset. On RAGTruth QA it gets about 0.71 balanced accuracy. LettuceDetect reports higher F1 on RAGTruth, but it is fine-tuned on the RAGTruth training split, so that accuracy is domain specific. Athena trades some in-domain accuracy for working on any corpus with no training. On HaluEval QA it lands around 0.69 accuracy, which is roughly GPT-3.5 to GPT-4 prompting territory, except it is local and about 25ms per check.
+The honest version of the benchmarks, since that is the first thing anyone asks. It is zero-shot, so it is not trained on any hallucination dataset. On RAGTruth QA it gets about 0.71 balanced accuracy. LettuceDetect reports higher F1 on RAGTruth, but it is fine-tuned on the RAGTruth training split, so that accuracy is domain specific (and RAGTruth's original span labels are known to under-annotate, so take everyone's RAGTruth F1 with a grain of salt). Athena trades some in-domain accuracy for working on any corpus with no training. On HaluEval QA it lands around 0.69 accuracy, roughly GPT-3.5 to GPT-4 prompting territory, except it is local and about 25ms per check.
 
-What I think is actually new here: it is a library and not a hosted API, it is provider neutral, it returns per-claim source spans instead of one number, and it has a circuit-breaker primitive for agents that halts a chain the moment a step stops being grounded.
+What I think is actually new here: it is a library and not a hosted API or a serving-stack plugin, it is provider neutral, and the detection backend is swappable — the revision step and the agent circuit-breaker sit on top, so you can point a stronger trained detector at the same interface. The circuit-breaker for agents is the piece nothing else ships as a drop-in.
 
 Where it loses: heavily paraphrased claims with almost no shared words, and it is not going to beat a model that was fine-tuned on your exact benchmark. Happy to get into the approach or the failure cases.
 

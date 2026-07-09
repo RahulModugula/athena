@@ -1,6 +1,11 @@
 # athena-verify
 
-**Open-source runtime guardrail that catches RAG hallucinations sentence-by-sentence — with per-claim source spans that show exactly which chunk supported (or didn't support) each sentence.**
+**A local, provider-neutral verification layer for RAG and agents.** It flags
+ungrounded answer sentences with per-claim source spans, hands back the corrected
+sentence, and — the part nothing else ships as a drop-in — **halts an agent chain
+the moment a step stops being grounded**. Zero-shot and offline by default; the
+detection backend is swappable, so a stronger trained detector can slot in under
+the same revision and circuit-breaker layer.
 
 ```python
 from athena_verify import verify
@@ -229,6 +234,21 @@ result = verified_completion(
     context=retrieved_chunks,
 )
 ```
+
+## Observability
+
+Every verification can emit an OpenTelemetry span (trust score, pass/fail, and a
+per-sentence event with status and scores) straight to Grafana, Datadog, or
+Jaeger — no code change, just an env flag:
+
+```bash
+pip install "athena-verify[otel]"
+export ATHENA_OTEL_ENABLED=1   # or ATHENA_LANGFUSE_ENABLED=1
+```
+
+Configure a tracer/exporter in your app once and each `verify()` call records an
+`athena.verify` span. If the OpenTelemetry SDK isn't installed, emission falls
+back to a structured log line, so enabling the flag is always safe.
 
 ## API
 
