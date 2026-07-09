@@ -1,10 +1,10 @@
 # The Athena-Verify Revised Plan (April 17, 2026)
 
-> **SUPERSEDED (2026-07-08)** — replaced by [`STRATEGY.md`](STRATEGY.md). Its
+> **SUPERSEDED (2026-07-08)** — replaced by [`LAUNCH_GUIDE.md`](LAUNCH_GUIDE.md). Its
 > vertical-market research (Part 2: legal citations, agent-cascade prevention,
-> slopsquatting, voice AI, finance, journalism) is still useful and is carried
-> forward into STRATEGY.md; its codebase blockers (Part 3) are fixed except
-> PyPI publish; its launch copy (Parts 6–9) is superseded by [`LAUNCH.md`](LAUNCH.md).
+> slopsquatting, voice AI, finance, journalism) is carried forward into
+> LAUNCH_GUIDE.md; its codebase blockers (Part 3) are fixed except PyPI publish;
+> its launch copy (Parts 6–9) is superseded by LAUNCH_GUIDE.md.
 > Note its "revision moat is dead" call was half-right: cloud APIs (Azure/Vectara)
 > added correction, but local OSS libraries still mostly only flag, so revision
 > remains a supporting differentiator behind the agent circuit-breaker.

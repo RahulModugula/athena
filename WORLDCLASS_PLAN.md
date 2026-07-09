@@ -1,6 +1,6 @@
 # Athena: World-Class Roadmap
 
-> **SUPERSEDED** — This document has been replaced by `STRATEGY.md` (2026-04-16).
+> **SUPERSEDED** — This document has been replaced by [`LAUNCH_GUIDE.md`](LAUNCH_GUIDE.md).
 > The project has narrowed from a full-stack RAG system to a focused **runtime verification layer** (`athena-verify`).
 > This file is kept for historical reference only. All active work follows the new strategy.
 > The code preserved on the `legacy/full-stack` branch corresponds to the plan described below.
